@@ -27,9 +27,18 @@ def main() -> None:
     if window.terminal is None:
         raise RuntimeError("VTE terminal was not created")
 
+    # Browse buttons use Gtk.FileDialog rather than the legacy
+    # Gtk.FileChooserNative path that crashed on a real Ubuntu desktop.
+    if not hasattr(target_gui.Gtk, "FileDialog"):
+        raise RuntimeError("GTK runtime does not provide Gtk.FileDialog")
+    dialog = target_gui.Gtk.FileDialog()
+    dialog.set_title("Disk-image browse smoke test")
+    if dialog.get_title() != "Disk-image browse smoke test":
+        raise RuntimeError("Gtk.FileDialog could not be constructed/configured")
+
     window.destroy()
     application.quit()
-    print("GTK GUI smoke test passed: GTK4/VTE window and controls constructed")
+    print("GTK GUI smoke test passed: GTK4/VTE window, controls, and FileDialog constructed")
 
 
 if __name__ == "__main__":
