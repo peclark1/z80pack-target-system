@@ -28,6 +28,7 @@
 
 #include "sim.h"
 #include "simdefs.h"
+#include "simglb.h"
 #include "simmem.h"
 #include "target-dsi-fdc1.h"
 
