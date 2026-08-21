@@ -63,12 +63,27 @@ Saved GUI settings under `~/.config/z80pack-target-system/gui.json` are retained
 - CPU speed in MHz
 - IMSAI front-panel / sense-switch input byte returned by `IN FFH`
 
-The monitor's current low-two-bit console convention is:
+### Graphical IMSAI sense switches
+
+The Machine section includes an eight-switch graphical bank labeled bits 7 through 0. **UP = 1** and **DOWN = 0**. The switches and the hexadecimal `Front panel FFH` field are bidirectionally synchronized, so either can be used to set the byte.
+
+The GUI also decodes the low two bits using the target monitor convention:
 
 - `00` — Console I/O
 - `01` — Serial I/O A
-- `02` — MIO
-- `03` — reserved/fallback
+- `02` — MIO SIO
+- `03` — reserved / Console I/O fallback
+
+Graphical switch changes are live while targetsim is running. The GUI writes the current byte to `build/gui-front-panel.hex`, passes that file to targetsim with `FP_FILE=...`, and the target I/O layer refreshes the value on each `IN FFH`. A restart is therefore not required merely to move a sense switch. `FP_PORT=xx` remains the normal command-line fallback/default when no live file is supplied.
+
+For command-line experiments the same live mechanism can be used directly:
+
+```sh
+printf '02\n' > /tmp/imsai-ff.hex
+make run FP_PORT=00 FP_FILE=/tmp/imsai-ff.hex
+```
+
+Changing `/tmp/imsai-ff.hex` to another hexadecimal byte changes what subsequent `IN FFH` instructions read.
 
 ### IDE / CF
 
@@ -111,12 +126,12 @@ Disk images themselves are never copied into the configuration directory. Only t
 
 ## Planned enhancements
 
-The first version intentionally keeps the GUI thin and uses the existing Makefile/emulator interfaces. Useful future additions include:
+The GUI intentionally remains a thin front end over the existing Makefile/emulator interfaces. Useful future additions include:
 
 - named saved machine profiles
 - separate emulator trace/log view so tracing does not clutter the CP/M terminal
 - ROM revision and SHA display
 - disk SHA-256 on demand
 - dedicated reset / boot-source actions
-- graphical IMSAI sense-switch controls
+- a more complete IMSAI front-panel visualization beyond the sense-switch bank
 - additional target devices as their emulation is implemented

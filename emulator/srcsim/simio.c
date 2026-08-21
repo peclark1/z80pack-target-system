@@ -6,7 +6,9 @@
  * them.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "sim.h"
@@ -25,6 +27,12 @@
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
  */
 unix_connector_t ucons[NUMUSOC];
+
+/* Optional live front-panel value file. The GTK front end writes a two-digit
+ * hexadecimal byte here whenever a graphical sense switch moves. CLI sessions
+ * continue to use TARGET_FP_PORT exactly as before when no file is supplied.
+ */
+static char *front_panel_value_file;
 
 /* Console I/O V2 uses different ready-bit positions than the IMSAI SIO
  * terminal backend we reuse. SIO1A reports TX=bit0/RX=bit1; the Console I/O
@@ -62,8 +70,32 @@ static BYTE console_io_data_in(void)
     return data;
 }
 
+static void refresh_front_panel_from_file(void)
+{
+    FILE *stream;
+    char buffer[32];
+    char *end = NULL;
+    long parsed;
+
+    if (front_panel_value_file == NULL || *front_panel_value_file == '\0')
+        return;
+
+    stream = fopen(front_panel_value_file, "r");
+    if (stream == NULL)
+        return;
+
+    if (fgets(buffer, sizeof(buffer), stream) != NULL) {
+        parsed = strtol(buffer, &end, 16);
+        if (end != buffer && parsed >= 0 && parsed <= 0xff)
+            fp_port = (BYTE) parsed;
+    }
+
+    fclose(stream);
+}
+
 static BYTE front_panel_in(void)
 {
+    refresh_front_panel_from_file();
     return fp_port;
 }
 
@@ -75,15 +107,26 @@ static void front_panel_out(BYTE data)
 static void apply_runtime_overrides(void)
 {
     const char *value = getenv("TARGET_FP_PORT");
+    const char *file = getenv("TARGET_FP_FILE");
     char *end = NULL;
     long parsed;
 
-    if (value == NULL || *value == '\0')
-        return;
+    free(front_panel_value_file);
+    front_panel_value_file = NULL;
 
-    parsed = strtol(value, &end, 16);
-    if (end != value && *end == '\0' && parsed >= 0 && parsed <= 0xff)
-        fp_port = (BYTE) parsed;
+    if (file != NULL && *file != '\0')
+        front_panel_value_file = strdup(file);
+
+    if (value != NULL && *value != '\0') {
+        parsed = strtol(value, &end, 16);
+        if (end != value && *end == '\0' && parsed >= 0 && parsed <= 0xff)
+            fp_port = (BYTE) parsed;
+    }
+
+    /* If a live-value file already exists, let it override the fallback byte
+     * immediately so the first IN FFH sees the GUI switch state.
+     */
+    refresh_front_panel_from_file();
 }
 
 /* Unused by the target overlay, but declared by the inherited IMSAI simio.h
@@ -167,6 +210,9 @@ void exit_io(void)
 
     target_dsi_fdc1_exit();
     target_ide_exit();
+
+    free(front_panel_value_file);
+    front_panel_value_file = NULL;
 
     for (i = 0; i < NUMUSOC; i++) {
         if (ucons[i].ssc)
