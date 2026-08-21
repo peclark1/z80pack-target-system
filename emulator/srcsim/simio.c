@@ -10,6 +10,7 @@
 
 #include "sim.h"
 #include "simdefs.h"
+#include "simglb.h"
 #include "simcfg.h"
 #include "simio.h"
 
@@ -17,6 +18,7 @@
 #include "imsai-hal.h"
 #include "unix_network.h"
 #include "target-ide.h"
+#include "target-dsi-fdc1.h"
 
 /* The upstream IMSAI HAL expects the machine layer to supply the connector
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
@@ -38,6 +40,25 @@ static BYTE console_io_status_in(void)
         cio_status |= 0x04;      /* TX ready -> bit 2 */
 
     return cio_status;
+}
+
+/*
+ * Ctrl-] (ASCII 1Dh) is reserved as the targetsim host escape key.  Ctrl-C
+ * remains a normal guest character so CP/M programs retain their historical
+ * interrupt/abort behavior.  Setting the normal z80pack USERINT state lets
+ * run_cpu() unwind through mon(), which in turn restores the UNIX terminal.
+ */
+static BYTE console_io_data_in(void)
+{
+    BYTE data = imsai_sio1a_data_in();
+
+    if (data == 0x1d) {
+        cpu_error = USERINT;
+        cpu_state = ST_STOPPED;
+        return 0;
+    }
+
+    return data;
 }
 
 static BYTE front_panel_in(void)
@@ -65,7 +86,7 @@ void lpt_reset(void)
  */
 in_func_t *const port_in[256] = {
     [0x00] = console_io_status_in,
-    [0x01] = imsai_sio1a_data_in,
+    [0x01] = console_io_data_in,
 
     /* S100Computers Dual IDE/CF V3 */
     [0x30] = target_ide_a_in,
@@ -78,7 +99,10 @@ in_func_t *const port_in[256] = {
     [0x42] = imsai_sio2a_data_in,
     [0x43] = imsai_sio2a_status_in,
 
-    [0xFF] = front_panel_in
+    /* Digital Systems FDC-1: status shares 7Fh with command output. */
+    [0x7f] = target_dsi_fdc1_status_in,
+
+    [0xff] = front_panel_in
 };
 
 out_func_t *const port_out[256] = {
@@ -94,7 +118,12 @@ out_func_t *const port_out[256] = {
     [0x42] = imsai_sio2a_data_out,
     [0x43] = imsai_sio2a_status_out,
 
-    [0xFF] = front_panel_out
+    /* Digital Systems FDC-1 single-density interface. */
+    [0x7d] = target_dsi_fdc1_dma_low_out,
+    [0x7e] = target_dsi_fdc1_dma_high_out,
+    [0x7f] = target_dsi_fdc1_command_out,
+
+    [0xff] = front_panel_out
 };
 
 void init_io(void)
@@ -102,6 +131,7 @@ void init_io(void)
     imsai_sio_reset();
     hal_reset();
     target_ide_init();
+    target_dsi_fdc1_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -111,12 +141,14 @@ void reset_io(void)
 {
     imsai_sio_reset();
     target_ide_reset();
+    target_dsi_fdc1_reset();
 }
 
 void exit_io(void)
 {
     int i;
 
+    target_dsi_fdc1_exit();
     target_ide_exit();
 
     for (i = 0; i < NUMUSOC; i++) {
