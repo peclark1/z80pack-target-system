@@ -1,16 +1,17 @@
 /*
  * Software-visible emulation of the S100Computers Dual IDE/CF V3 board.
  *
- * The real board presents an ATA/CF device through an 8255 PPI.  The target
+ * The real board presents an ATA/CF device through an 8255 PPI. The target
  * monitor selects an ATA register with the low nibble of PPI port C and uses
- * bit 6 as /RD, bit 5 as /WR, and bit 7 as RESET.  PPI ports A/B carry the
+ * bit 6 as /RD, bit 5 as /WR, and bit 7 as RESET. PPI ports A/B carry the
  * low/high bytes of the 16-bit ATA data bus.
  *
- * This model deliberately implements the board at that software boundary.  It
+ * This model deliberately implements the board at that software boundary. It
  * does not attempt to emulate individual TTL devices or electrical timing.
  */
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -322,7 +323,7 @@ static void start_identify(void)
 
     memset(identify_data, 0, sizeof(identify_data));
     sectors64 = drive->size / SECTOR_SIZE;
-    sectors = sectors64 > 0xffffffffu ? 0xffffffffu : (uint32_t) sectors64;
+    sectors = sectors64 > UINT32_MAX ? UINT32_MAX : (uint32_t) sectors64;
 
     identify_put_word(0, 0x0040);       /* fixed disk */
     identify_put_word(47, 0x8001);      /* one-sector multiple maximum */
