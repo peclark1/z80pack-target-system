@@ -27,7 +27,7 @@ fi
 cat >"$LAUNCHER" <<EOF
 #!/usr/bin/env bash
 set -e
-exec python3 "$ROOT/gui/targetsim_gui.py" "\$@"
+exec python3 "$ROOT/gui/app.py" "\$@"
 EOF
 chmod 0755 "$LAUNCHER"
 
