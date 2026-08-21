@@ -17,6 +17,7 @@ DSI_TRACE ?= 0
 DSI_WRITE ?= 0
 DSI_BOOTSTRAP ?= 0
 SMOKE_CF := build/smoke-cf0.img
+SMOKE_DSI := build/smoke-dsi.img
 
 TARGET_INPUTS := \
 	Makefile \
@@ -30,7 +31,7 @@ TARGET_INPUTS := \
 	emulator/srcsim/target-dsi-fdc1.c \
 	emulator/srcsim/target-dsi-fdc1.h
 
-.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke test clean
+.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-dsi smoke test clean
 
 help:
 	@printf '%s\n' \
@@ -52,7 +53,7 @@ help:
 	  'make cf-reset                      Delete disposable lab work copies' \
 	  'make lab CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
 	  '                                   First setup/build, then run the CP/M 3 lab' \
-	  'make smoke                         Real-ROM IDE boot regression' \
+	  'make smoke                         Run IDE/ROM and DSI FDC-1 boot regressions' \
 	  'make test                          Run host-side regression tests' \
 	  'make clean                         Remove all generated build output/work images' \
 	  '' \
@@ -146,12 +147,23 @@ lab: build current-rom cf-work
 smoke-cf:
 	$(PYTHON) tools/make_smoke_cf.py "$(SMOKE_CF)"
 
-smoke: build current-rom smoke-cf
+smoke-dsi-image:
+	$(PYTHON) tools/make_dsi_smoke.py "$(SMOKE_DSI)"
+
+smoke-ide: build current-rom smoke-cf
 	$(PYTHON) tools/run_boot_smoke.py \
 		--targetsim "$(TARGET_BIN)" \
 		--config "$(TARGET_DIR)/conf_3d/system.conf" \
 		--romdir "$(abspath build)" \
 		--cf0 "$(SMOKE_CF)"
+
+smoke-dsi: build smoke-dsi-image
+	$(PYTHON) tools/run_dsi_smoke.py \
+		--targetsim "$(TARGET_BIN)" \
+		--config "$(TARGET_DIR)/conf_3d/dsi-compat.conf" \
+		--disk "$(SMOKE_DSI)"
+
+smoke: smoke-ide smoke-dsi
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
