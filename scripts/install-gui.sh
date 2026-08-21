@@ -5,7 +5,8 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${HOME}/.local/share/applications"
 LAUNCHER="${BIN_DIR}/imsai-target-system"
-DESKTOP="${APP_DIR}/com.peclark.Z80PackTargetSystem.desktop"
+DESKTOP="${APP_DIR}/com.peclark.z80pack-target-system.desktop"
+APP_ID="com.peclark.z80pack-target-system"
 
 mkdir -p "$BIN_DIR" "$APP_DIR"
 
@@ -43,7 +44,7 @@ Terminal=false
 Categories=Development;Emulator;
 Keywords=IMSAI;S-100;CP/M;Z80;z80pack;emulator;
 StartupNotify=true
-StartupWMClass=com.peclark.Z80PackTargetSystem
+StartupWMClass=$APP_ID
 EOF
 chmod 0644 "$DESKTOP"
 
