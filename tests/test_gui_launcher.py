@@ -50,15 +50,22 @@ class GuiLauncherTests(unittest.TestCase):
             cfg = LaunchConfig(profile=PROFILE_TARGET, dsi0=disk.name, fp_port="XYZ")
             self.assertTrue(any("front-panel" in error for error in cfg.validate()))
 
-    def test_settings_round_trip(self):
+    def test_settings_round_trip_but_dsi_write_resets(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gui.json"
-            cfg = LaunchConfig(profile=PROFILE_DSI_COMPAT, dsi0="disk.img", cpu_mhz=6)
+            cfg = LaunchConfig(
+                profile=PROFILE_DSI_COMPAT,
+                dsi0="disk.img",
+                cpu_mhz=6,
+                dsi_write=True,
+            )
             save_config(cfg, path)
             loaded = load_config(path)
             self.assertEqual(loaded.profile, PROFILE_DSI_COMPAT)
             self.assertEqual(loaded.dsi0, "disk.img")
             self.assertEqual(loaded.cpu_mhz, 6)
+            self.assertFalse(loaded.dsi_write)
+            self.assertFalse(load_config(path).dsi_write)
 
 
 if __name__ == "__main__":
