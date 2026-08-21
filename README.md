@@ -4,6 +4,25 @@ A z80pack-based emulator for the software-visible hardware profile of the IMSAI 
 
 The goal is not to create a generic CP/M machine. The goal is to run the **same monitor ROM, CP/M boot code, BIOS, disk images, I/O addresses, and console-selection logic** used by the physical IMSAI so that firmware and CP/M system-generation work can be developed and tested before moving to the real hardware.
 
+## Current verified status
+
+The emulator now passes an end-to-end CI smoke test using the **actual current 4K target monitor source**:
+
+1. build the target monitor with PASMO;
+2. verify the logical 4K image;
+3. load it read-only at `F000H-FFFFH`;
+4. start the Z80 at `F000H`;
+5. read the IMSAI sense-switch byte from `FFH`;
+6. use Console I/O at `00H/01H`;
+7. initialize the emulated Dual IDE/CF through ports `30H-34H`;
+8. issue ATA READ SECTORS (`20H`) for LBA 1, count 12;
+9. transfer the loader through the emulated 8255/ATA data path to `0100H`;
+10. validate the loader's `31H` signature and execute it successfully.
+
+The generated machine reports exactly the current target's CPU-visible memory profile: 60K RAM at `0000H-EFFFH`, 4K ROM at `F000H-FFFFH`, POJ/reset at `F000H`, and no additional MMU RAM banks exposed.
+
+This proves the monitor/console/front-panel/IDE boot path. The next major validation is to attach a copy of the real CP/M 3 CF image and boot the real CPMLDR/CPM3.SYS rather than the small synthetic smoke-test loader.
+
 ## Physical target represented
 
 - IMSAI 8080 chassis/front panel
@@ -64,7 +83,7 @@ The initial upstream baseline is commit:
 
 ## Milestones
 
-### M1 - ROM console
+### M1 - ROM console — working
 
 - Z80 execution
 - RAM `0000H-EFFFH`
@@ -72,14 +91,15 @@ The initial upstream baseline is commit:
 - reset/POJ to `F000H`
 - IMSAI front-panel switch byte at `FFH`
 - Console I/O V2 at `00H/01H`
-- boot the actual 4K target monitor ROM and interact with its prompt
+- boot and interact with the actual 4K target monitor ROM
 
-### M2 - Dual IDE/CF
+### M2 - Dual IDE/CF — monitor boot path working
 
-- emulate the board's `30H-34H` software interface
-- two CF image files
-- implement the ATA subset used by the monitor and CP/M BIOS
-- boot an existing CP/M 3 CF image through the real monitor
+- board's `30H-34H` software interface implemented
+- two CF image files supported
+- ATA READ, WRITE, IDENTIFY and required compatibility commands implemented
+- real monitor IDE boot path verified through a synthetic CPMLDR image
+- remaining acceptance step: boot an existing real CP/M 3 CF image
 
 ### M3 - CP/M 3 lab
 
@@ -90,7 +110,7 @@ The initial upstream baseline is commit:
 
 ### M4 - Additional target I/O
 
-- MIO SIO subset at `42H/43H`
+- MIO SIO subset at `42H/43H` — initial serial mapping implemented
 - Serial I/O V3 channel A at `A1H/A3H`
 - front-panel console-selection regression tests
 - Altair FDC/FDC+ compatible floppy path
@@ -107,13 +127,35 @@ cd z80pack-target-system
 make bootstrap
 ```
 
+Build the emulator:
+
+```sh
+make build
+```
+
 To convert the logical 4K monitor `.bin` produced by `s100-target-system-4k-master-rom` into Intel HEX at `F000H` for z80pack:
 
 ```sh
 make rom ROM_BIN=/path/to/IMSAI_TARGET_MONITOR_4K.bin
 ```
 
-The generated file is `build/target-monitor.hex`.
+Or build the pinned current monitor source automatically and run the complete IDE boot smoke test:
+
+```sh
+make smoke
+```
+
+For local use with real CF image copies, place them at `disks/cf0.img` and `disks/cf1.img` or supply alternate paths:
+
+```sh
+make run CF0=/path/to/cf0.img CF1=/path/to/cf1.img
+```
+
+ATA command tracing can be enabled with:
+
+```sh
+make run IDE_TRACE=1
+```
 
 Run host-side tests with:
 
