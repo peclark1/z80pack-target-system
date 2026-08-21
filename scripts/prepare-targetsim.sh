@@ -33,7 +33,9 @@ cp "$ROOT/emulator/srcsim/target-ide.h" "$TARGET/srcsim/target-ide.h"
 cp "$ROOT/emulator/srcsim/target-dsi-fdc1.c" "$TARGET/srcsim/target-dsi-fdc1.c"
 cp "$ROOT/emulator/srcsim/target-dsi-fdc1.h" "$TARGET/srcsim/target-dsi-fdc1.h"
 
-# Keep a copy with the generated machine for convenient manual launches.
+# Keep target and historical DSI compatibility configs with the generated
+# machine for convenient manual launches.
 cp "$ROOT/emulator/conf/system.conf" "$TARGET/conf_3d/system.conf"
+cp "$ROOT/emulator/conf/dsi-compat.conf" "$TARGET/conf_3d/dsi-compat.conf"
 
 echo "prepared target machine at $TARGET"
