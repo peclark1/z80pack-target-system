@@ -4,7 +4,7 @@ set -euo pipefail
 BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${HOME}/.local/share/applications"
 LAUNCHER="${BIN_DIR}/imsai-target-system"
-DESKTOP="${APP_DIR}/com.peclark.Z80PackTargetSystem.desktop"
+DESKTOP="${APP_DIR}/com.peclark.z80pack-target-system.desktop"
 
 rm -f "$LAUNCHER" "$DESKTOP"
 
