@@ -20,8 +20,10 @@ sed -i 's/^#define MACHINE "imsai"/#define MACHINE "target"/' "$TARGET/srcsim/si
 sed -i 's/IMSAI 8080 Simulation/IMSAI Target System Simulation/' "$TARGET/srcsim/sim.h"
 
 # The physical target currently has one CPU-visible 64K address space only.
-# Disable inherited IMSAI MPU-B banked-ROM behavior and report no MMU banks.
-sed -i 's/^#define HAS_BANKED_ROM/\/\* #define HAS_BANKED_ROM \*\//' "$TARGET/srcsim/sim.h"
+# Keep upstream banked-ROM compile plumbing intact because shared IMSAI code
+# expects R_flag to exist, but advertise no additional MMU RAM banks. Our
+# target I/O map exposes no bank-select port, so those upstream storage arrays
+# remain unreachable by target software.
 sed -i 's/^int num_banks = sizeof(banks) \/ sizeof(BYTE \*) - 1;$/int num_banks = 0;/' "$TARGET/srcsim/simmem.c"
 
 # Replace the machine-specific I/O dispatch and add target-only devices.
