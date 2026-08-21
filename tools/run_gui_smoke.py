@@ -78,9 +78,28 @@ def main() -> None:
     if window.status.get_text() != "Build complete":
         raise RuntimeError(f"VTE child did not complete cleanly: {window.status.get_text()}")
 
+    # Exercise the exact GUI Stop path too. Ubuntu 24.04's VTE binding expects
+    # feed_child() data as bytes/list[int]; the application sends Ctrl-] as a
+    # string and the compatibility shim must normalize it. The child puts its
+    # PTY in raw mode and exits only after receiving exactly ASCII 1Dh.
+    window._spawn(
+        [
+            sys.executable,
+            "-c",
+            "import os, tty; tty.setraw(0); b=os.read(0,1); raise SystemExit(0 if b == b'\\x1d' else 3)",
+        ],
+        "VTE stop smoke test…",
+        True,
+    )
+    drain_main_context_until(lambda: window.status.get_text() == "Running")
+    window._stop(None)
+    drain_main_context_until(lambda: not window.running)
+    if window.status.get_text() != "Stopped":
+        raise RuntimeError(f"GUI Stop did not deliver Ctrl-] cleanly: {window.status.get_text()}")
+
     window.destroy()
     application.quit()
-    print("GTK GUI smoke test passed: switches, FileDialog, and VTE child spawn all work")
+    print("GTK GUI smoke test passed: switches, FileDialog, VTE spawn, and Stop all work")
 
 
 if __name__ == "__main__":
