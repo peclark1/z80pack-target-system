@@ -20,9 +20,27 @@ def _find_main_paned(window):
 
 
 def _find_settings_box(window):
+    """Return the public settings container exposed by core_app.
+
+    Older GTK builds may interpose an internal viewport beneath a
+    Gtk.ScrolledWindow, so extensions should not depend on walking GTK's
+    implementation-specific widget tree. core_app now exposes settings_box
+    explicitly; retain the old lookup only as a compatibility fallback.
+    """
+    settings = getattr(window, "settings_box", None)
+    if isinstance(settings, _core.Gtk.Box):
+        return settings
+
     paned = _find_main_paned(window)
     scroll = paned.get_start_child() if paned is not None else None
-    return scroll.get_child() if isinstance(scroll, _core.Gtk.ScrolledWindow) else None
+    child = scroll.get_child() if isinstance(scroll, _core.Gtk.ScrolledWindow) else None
+    if isinstance(child, _core.Gtk.Box):
+        return child
+    if child is not None:
+        nested = child.get_first_child()
+        if isinstance(nested, _core.Gtk.Box):
+            return nested
+    return None
 
 
 class RomRow(_core.Gtk.Frame):
@@ -129,15 +147,17 @@ class TargetSimWindow(_BaseTargetSimWindow):
         self.rom_row = RomRow(self._controls_changed)
         self.rom_row.set_path(self.config.rom_image)
         settings = _find_settings_box(self)
-        if isinstance(settings, _core.Gtk.Box):
-            previous = None
-            child = settings.get_first_child()
-            while child is not None:
-                if isinstance(child, _core.Gtk.Separator):
-                    break
-                previous = child
-                child = child.get_next_sibling()
-            settings.insert_child_after(self.rom_row, previous)
+        if not isinstance(settings, _core.Gtk.Box):
+            raise RuntimeError("unable to attach 4K ROM selector to the GUI settings panel")
+
+        previous = None
+        child = settings.get_first_child()
+        while child is not None:
+            if isinstance(child, _core.Gtk.Separator):
+                break
+            previous = child
+            child = child.get_next_sibling()
+        settings.insert_child_after(self.rom_row, previous)
 
         # GTK recommends get/set_default_size() for persistent window sizing;
         # it retains the normal (unmaximized) dimensions as the user resizes.
