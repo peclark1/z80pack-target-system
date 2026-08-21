@@ -1,0 +1,11 @@
+build/
+__pycache__/
+*.pyc
+
+# Local/generated target media
+rom/*.bin
+rom/*.hex
+disks/*.img
+disks/*.dsk
+disks/*.imd
+cpm3/build/
