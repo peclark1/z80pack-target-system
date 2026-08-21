@@ -93,12 +93,18 @@ class LaunchConfig:
         return shlex.join(self.make_argv(repo_root))
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        # Never persist write authorization. Each application launch must
+        # explicitly opt in again before an archival DSI image can be changed.
+        value["dsi_write"] = False
+        return value
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "LaunchConfig":
         fields = cls.__dataclass_fields__
-        return cls(**{k: v for k, v in value.items() if k in fields})
+        config = cls(**{k: v for k, v in value.items() if k in fields})
+        config.dsi_write = False
+        return config
 
 
 def config_path() -> Path:
