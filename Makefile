@@ -1,6 +1,8 @@
 PYTHON ?= python3
 ROM_BIN ?=
+ROM_IMAGE ?=
 ROM_HEX := build/target-monitor.hex
+RUN_ROM_DIR := build/run-rom
 TARGET_DIR := build/z80pack-upstream/targets100sim
 TARGET_BIN := $(TARGET_DIR)/targetsim
 TARGET_PREPARED := $(TARGET_DIR)/.target-prepared
@@ -21,6 +23,7 @@ FP_FILE ?=
 CPU_MHZ ?= 4
 SMOKE_CF := build/smoke-cf0.img
 SMOKE_DSI := build/smoke-dsi.img
+SMOKE_ROM_DIR := build/smoke-rom
 
 TARGET_INPUTS := \
 	Makefile \
@@ -34,7 +37,7 @@ TARGET_INPUTS := \
 	emulator/srcsim/target-dsi-fdc1.c \
 	emulator/srcsim/target-dsi-fdc1.h
 
-.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
+.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-selected-rom smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
 
 help:
 	@printf '%s\n' \
@@ -44,6 +47,8 @@ help:
 	  'make current-rom                   Build pinned target ROM only when needed' \
 	  'make build                         Incrementally build targetsim' \
 	  'make run                           Restart existing lab work images immediately' \
+	  'make run ROM_IMAGE=/path/rom.bin   Run a selected 4K ROM without replacing the pinned ROM' \
+	  '                                   ROM_IMAGE accepts 4096-byte .bin or Intel HEX at F000H-FFFFH' \
 	  'make run CPU_MHZ=4 FP_PORT=00      Set CPU speed and IMSAI FFH input byte' \
 	  'make run FP_FILE=/path/value.txt   Read live IMSAI FFH value from a hex-byte file' \
 	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
@@ -100,7 +105,9 @@ run:
 		echo 'error: targetsim is not built; run make lab or make build first' >&2; \
 		exit 2; \
 	fi
-	@if [ ! -f "$(ROM_HEX)" ]; then \
+	@if [ -n "$(strip $(ROM_IMAGE))" ]; then \
+		$(PYTHON) tools/prepare_run_rom.py "$(ROM_IMAGE)" "$(RUN_ROM_DIR)"; \
+	elif [ ! -f "$(ROM_HEX)" ]; then \
 		echo 'error: build/target-monitor.hex is missing; run make lab or make current-rom first' >&2; \
 		exit 2; \
 	fi
@@ -115,7 +122,7 @@ run:
 	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
 	TARGET_FP_PORT="$(FP_PORT)" \
 	TARGET_FP_FILE="$(FP_FILE)" \
-	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(abspath build)"'
+	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(if $(strip $(ROM_IMAGE)),$(abspath $(RUN_ROM_DIR)),$(abspath build))"'
 
 dsi-compat: build
 	@if [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; then \
@@ -155,7 +162,7 @@ cf-reset:
 	@echo 'disposable CF work copies removed; reference images were not touched'
 
 lab: build current-rom cf-work
-	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" FP_FILE="$(FP_FILE)" CPU_MHZ="$(CPU_MHZ)"
+	$(MAKE) run ROM_IMAGE="$(ROM_IMAGE)" CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" FP_FILE="$(FP_FILE)" CPU_MHZ="$(CPU_MHZ)"
 
 gui:
 	$(PYTHON) gui/app.py
@@ -182,13 +189,22 @@ smoke-ide: build current-rom smoke-cf
 		--romdir "$(abspath build)" \
 		--cf0 "$(SMOKE_CF)"
 
+smoke-selected-rom: build current-rom smoke-cf
+	rm -rf "$(SMOKE_ROM_DIR)"
+	$(PYTHON) tools/prepare_run_rom.py "$(ROM_HEX)" "$(SMOKE_ROM_DIR)"
+	$(PYTHON) tools/run_boot_smoke.py \
+		--targetsim "$(TARGET_BIN)" \
+		--config "$(TARGET_DIR)/conf_3d/system.conf" \
+		--romdir "$(abspath $(SMOKE_ROM_DIR))" \
+		--cf0 "$(SMOKE_CF)"
+
 smoke-dsi: build smoke-dsi-image
 	$(PYTHON) tools/run_dsi_smoke.py \
 		--targetsim "$(TARGET_BIN)" \
 		--config "$(TARGET_DIR)/conf_3d/dsi-compat.conf" \
 		--disk "$(SMOKE_DSI)"
 
-smoke: smoke-ide smoke-dsi
+smoke: smoke-ide smoke-selected-rom smoke-dsi
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
