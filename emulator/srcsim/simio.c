@@ -43,9 +43,9 @@ static BYTE console_io_status_in(void)
 }
 
 /*
- * Ctrl-] (ASCII 1Dh) is reserved as the targetsim host escape key.  Ctrl-C
+ * Ctrl-] (ASCII 1Dh) is reserved as the targetsim host escape key. Ctrl-C
  * remains a normal guest character so CP/M programs retain their historical
- * interrupt/abort behavior.  Setting the normal z80pack USERINT state lets
+ * interrupt/abort behavior. Setting the normal z80pack USERINT state lets
  * run_cpu() unwind through mon(), which in turn restores the UNIX terminal.
  */
 static BYTE console_io_data_in(void)
@@ -99,7 +99,8 @@ in_func_t *const port_in[256] = {
     [0x42] = imsai_sio2a_data_in,
     [0x43] = imsai_sio2a_status_in,
 
-    /* Digital Systems FDC-1: status shares 7Fh with command output. */
+    /* Digital Systems FDC-1. IN 7Eh requests bootstrap; IN 7Fh is status. */
+    [0x7e] = target_dsi_fdc1_bootstrap_in,
     [0x7f] = target_dsi_fdc1_status_in,
 
     [0xff] = front_panel_in
