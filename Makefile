@@ -5,10 +5,14 @@ TARGET_DIR := build/z80pack-upstream/targets100sim
 TARGET_BIN := $(TARGET_DIR)/targetsim
 CF0 ?= disks/cf0.img
 CF1 ?= disks/cf1.img
+CF0_SOURCE ?=
+CF1_SOURCE ?=
+CF0_WORK := build/cf0-work.img
+CF1_WORK := build/cf1-work.img
 IDE_TRACE ?= 0
 SMOKE_CF := build/smoke-cf0.img
 
-.PHONY: help bootstrap prepare rom current-rom build run smoke-cf smoke test clean
+.PHONY: help bootstrap prepare rom current-rom build run cf-work lab smoke-cf smoke test clean
 
 help:
 	@printf '%s\n' \
@@ -17,8 +21,12 @@ help:
 	  'make rom ROM_BIN=/path/monitor.bin Convert logical 4K ROM to Intel HEX' \
 	  'make current-rom                   Build pinned target ROM project revision' \
 	  'make build                         Build the targetsim emulator' \
-	  'make run                           Run with disks/cf0.img and disks/cf1.img' \
+	  'make run                           Run with disks/cf0.img and optional disks/cf1.img' \
 	  'make run IDE_TRACE=1               Run with IDE command tracing enabled' \
+	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
+	  '                                   Make writable full-geometry CF work copies' \
+	  'make lab CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
+	  '                                   Build ROM/emulator and run writable CP/M 3 lab' \
 	  'make smoke                         Real-ROM IDE boot regression' \
 	  'make test                          Run host-side regression tests' \
 	  'make clean                         Remove generated build output'
@@ -52,10 +60,28 @@ run:
 		echo 'error: build/target-monitor.hex is missing; run make rom ROM_BIN=...' >&2; \
 		exit 2; \
 	fi
+	@if [ ! -f "$(CF0)" ]; then \
+		echo 'error: CF0 image not found: $(CF0)' >&2; \
+		exit 2; \
+	fi
 	TARGET_CF0="$(abspath $(CF0))" \
-	TARGET_CF1="$(abspath $(CF1))" \
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
-	sh -c 'cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+	sh -c 'if [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+
+cf-work:
+	@if [ -z "$(CF0_SOURCE)" ]; then \
+		echo 'error: set CF0_SOURCE to the archived/reference CF image' >&2; \
+		exit 2; \
+	fi
+	$(PYTHON) tools/make_cf_workcopy.py "$(CF0_SOURCE)" "$(CF0_WORK)"
+	@if [ -n "$(CF1_SOURCE)" ]; then \
+		$(PYTHON) tools/make_cf_workcopy.py "$(CF1_SOURCE)" "$(CF1_WORK)"; \
+	else \
+		rm -f "$(CF1_WORK)"; \
+	fi
+
+lab: build current-rom cf-work
+	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(CF1_WORK)" IDE_TRACE="$(IDE_TRACE)"
 
 smoke-cf:
 	$(PYTHON) tools/make_smoke_cf.py "$(SMOKE_CF)"
