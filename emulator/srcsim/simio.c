@@ -2,7 +2,7 @@
  * Target-system I/O overlay for z80pack imsaisim.
  *
  * This file intentionally models only software-visible interfaces used by the
- * physical IMSAI target.  Additional cards are added as the ROM/BIOS needs
+ * physical IMSAI target. Additional cards are added as the ROM/BIOS needs
  * them.
  */
 
@@ -17,8 +17,13 @@
 #include "imsai-hal.h"
 #include "unix_network.h"
 
+/* The upstream IMSAI HAL expects the machine layer to supply the connector
+ * array declared by simio.h. SIO2A uses element zero for the MIO socket.
+ */
+unix_connector_t ucons[NUMUSOC];
+
 /* Console I/O V2 uses different ready-bit positions than the IMSAI SIO
- * terminal backend we reuse.  SIO1A reports TX=bit0/RX=bit1; the Console I/O
+ * terminal backend we reuse. SIO1A reports TX=bit0/RX=bit1; the Console I/O
  * target expects TX=bit2/RX=bit1.
  */
 static BYTE console_io_status_in(void)
@@ -61,7 +66,7 @@ in_func_t *const port_in[256] = {
     [0x00] = console_io_status_in,
     [0x01] = imsai_sio1a_data_in,
 
-    /* MIO SIO subset.  z80pack SIO2A already has the target's
+    /* MIO SIO subset. z80pack SIO2A already has the target's
      * TX-ready bit0 / RX-ready bit1 status convention.
      */
     [0x42] = imsai_sio2a_data_in,
