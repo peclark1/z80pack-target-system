@@ -44,6 +44,14 @@ def main() -> None:
     if window.terminal is None:
         raise RuntimeError("VTE terminal was not created")
 
+    # The selector must not merely exist as a Python object: it must actually
+    # be parented into the visible settings column. This catches GTK runtime
+    # differences where a ScrolledWindow inserts an internal viewport layer.
+    if window.rom_row.get_parent() is not window.settings_box:
+        raise RuntimeError("4K ROM selector is not attached to the visible settings panel")
+    if not window.rom_row.get_visible():
+        raise RuntimeError("4K ROM selector is attached but hidden")
+
     # The graphical ROM row must accept a valid 4K binary, reflect it in the
     # Makefile command, and return cleanly to the current pinned ROM.
     with tempfile.TemporaryDirectory() as directory:
@@ -119,7 +127,7 @@ def main() -> None:
 
     window.destroy()
     application.quit()
-    print("GTK GUI smoke test passed: ROM selector, switches, FileDialog, VTE spawn, and Stop all work")
+    print("GTK GUI smoke test passed: visible ROM selector, switches, FileDialog, VTE spawn, and Stop all work")
 
 
 if __name__ == "__main__":

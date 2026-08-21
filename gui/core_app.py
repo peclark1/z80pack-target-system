@@ -187,6 +187,7 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         paned.set_start_child(settings_scroll)
 
         settings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.settings_box = settings
         settings.set_margin_top(14)
         settings.set_margin_bottom(14)
         settings.set_margin_start(14)
