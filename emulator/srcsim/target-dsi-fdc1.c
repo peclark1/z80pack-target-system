@@ -7,6 +7,7 @@
  * the later FDC-3 interface:
  *
  *   7Dh OUT  low byte of the 16-bit DMA address
+ *   7Eh IN   invoke bootstrap: track 0 sector 1 -> 0000h-007Fh
  *   7Eh OUT  high byte of the 16-bit DMA address
  *   7Fh IN   controller status
  *   7Fh OUT  controller command
@@ -14,7 +15,7 @@
  * Media are flat IBM-3740-style single-density images:
  *   77 tracks, one side, 26 sectors/track, 128 bytes/sector.
  *
- * Each controller transfer uses the authentic 131-byte DMA buffer layout:
+ * Normal controller transfers use the authentic 131-byte DMA buffer layout:
  *   +0 track, +1 sector, +2 data address mark, +3..+130 sector data.
  */
 
@@ -77,6 +78,7 @@ static int head_unloaded;
 static int file_inoperative;
 static int trace_enabled;
 static int write_enabled;
+static int bootstrap_enabled;
 
 static int env_enabled(const char *name)
 {
@@ -125,7 +127,7 @@ static void open_drive(int number)
     snprintf(drive->path, sizeof(drive->path), "%s", path);
 
     /*
-     * Archival floppy images are precious.  Mount read-only unless the user
+     * Archival floppy images are precious. Mount read-only unless the user
      * explicitly opts into writes with TARGET_DSI_WRITE=1.
      */
     if (write_enabled) {
@@ -217,7 +219,7 @@ static void fail_sector(void)
 {
     /*
      * The FDC-1 manual describes an impossible sector request as searching
-     * until the head unloads, with IO FINISH remaining clear.  This status
+     * until the head unloads, with IO FINISH remaining clear. This status
      * lets authentic BIOS code escape its 88h (head-unload/IOF) wait loop.
      */
     head_unloaded = 1;
@@ -228,6 +230,51 @@ static uint64_t sector_offset(BYTE track, BYTE sector)
 {
     return ((uint64_t) track * DSI_SECTORS_PER_TRACK +
             ((uint64_t) sector - 1u)) * DSI_SECTOR_SIZE;
+}
+
+/*
+ * Hardware bootstrap path documented for FDC-1. This is deliberately not a
+ * normal 131-byte DMA operation: the controller reads T0/S1 directly into
+ * low memory 0000h-007Fh without CPU intervention.
+ */
+static int bootstrap_sector_one(void)
+{
+    BYTE data[DSI_SECTOR_SIZE];
+    size_t count;
+    unsigned i;
+    struct dsi_drive *drive = &drives[0];
+
+    if (drive->fp == NULL) {
+        fail_not_ready();
+        return 0;
+    }
+
+    begin_io();
+    selected_drive = 0;
+    current_track[0] = 0;
+    head_unloaded = 0;
+
+    if (fseeko(drive->fp, 0, SEEK_SET) != 0) {
+        fail_not_ready();
+        return 0;
+    }
+
+    count = fread(data, 1, sizeof(data), drive->fp);
+    if (count != sizeof(data)) {
+        fail_not_ready();
+        return 0;
+    }
+
+    for (i = 0; i < DSI_SECTOR_SIZE; i++)
+        dma_write((WORD) i, data[i]);
+
+    io_finished = 1;
+
+    if (trace_enabled)
+        fprintf(stderr,
+                "target-dsi: BOOTSTRAP T0/S1 -> 0000-007F\n");
+
+    return 1;
 }
 
 static void read_sector(void)
@@ -361,6 +408,12 @@ static void step_selected_drive(BYTE command)
     }
 }
 
+BYTE target_dsi_fdc1_bootstrap_in(void)
+{
+    (void) bootstrap_sector_one();
+    return 0xff;
+}
+
 BYTE target_dsi_fdc1_status_in(void)
 {
     BYTE status = error_status;
@@ -443,6 +496,9 @@ void target_dsi_fdc1_reset(void)
     head_unloaded = 1;
     file_inoperative = 0;
     memset(current_track, 0, sizeof(current_track));
+
+    if (bootstrap_enabled)
+        (void) bootstrap_sector_one();
 }
 
 void target_dsi_fdc1_init(void)
@@ -451,6 +507,7 @@ void target_dsi_fdc1_init(void)
 
     trace_enabled = env_enabled("TARGET_DSI_TRACE");
     write_enabled = env_enabled("TARGET_DSI_WRITE");
+    bootstrap_enabled = env_enabled("TARGET_DSI_BOOTSTRAP");
 
     for (i = 0; i < DSI_DRIVES; i++)
         open_drive(i);
