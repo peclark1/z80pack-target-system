@@ -2,7 +2,7 @@
 
 This directory contains the target-specific overlay applied to the pinned z80pack `imsaisim` source by `scripts/prepare-targetsim.sh`.
 
-## Current M1 implementation
+## Current implementation
 
 Implemented now:
 
@@ -15,6 +15,15 @@ Implemented now:
   - host terminal backend
   - target RX-ready bit `02H`
   - target TX-ready bit `04H`
+- Dual IDE/CF V3 at `30H-34H`
+  - 8255-visible A/B/C/control/drive-select interface
+  - two flat 512-byte-sector image files
+  - LBA READ SECTORS (`20H`)
+  - LBA WRITE SECTORS (`30H`)
+  - IDENTIFY DEVICE (`ECH`)
+  - FLUSH CACHE (`E7H`) and SET FEATURES (`EFH`) accepted for compatibility
+  - target monitor's exact PPI `RD`, `WR`, and `RESET` strobe sequence
+  - optional host-side ATA command tracing
 - IMSAI front-panel programmed input at `FFH`
   - headless value controlled by `fp_port` in `system.conf`
 - MIO serial subset at `42H/43H`
@@ -24,13 +33,24 @@ Implemented now:
 
 Not implemented yet:
 
-- Dual IDE/CF V3 at `30H-34H`
 - Serial I/O V3 / Z85C30 channel A at `A1H/A3H`
 - Altair FDC/FDC+ integration
 - CP/M disk-image build/install automation
-- detailed I/O/sector tracing
+- broad ATA command coverage beyond the commands required by current firmware/BIOS work
+- detailed instruction-level I/O tracing beyond the optional IDE command trace
 
-The monitor will therefore be able to execute its early reset/console path once a valid target ROM is supplied, but its current startup calls `IDE_INIT`; meaningful boot testing requires the Dual IDE/CF model next.
+## Dual IDE/CF abstraction
+
+The real board exposes the ATA task-file through an 8255 PPI. The emulator preserves that interface instead of letting the ROM access a host image directly. This means the real monitor and BIOS still have to perform the same sequence of writes to ports `30H-34H`, assert the same PPI control bits, poll the same ATA status bits, and transfer the same 16-bit data words.
+
+The backing images are selected through environment variables supplied by `make run`:
+
+```text
+TARGET_CF0   first CF image
+TARGET_CF1   second CF image
+```
+
+Missing images behave as not-ready devices. Writable files permit ATA WRITE commands; read-only files remain readable and reject writes.
 
 ## Why reuse z80pack SIO backends?
 

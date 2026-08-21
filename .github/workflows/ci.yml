@@ -16,13 +16,13 @@ jobs:
       - name: Run host-side tests
         run: make test
 
-  targetsim-build:
+  targetsim-build-and-boot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git libx11-dev
-      - name: Prepare and build targetsim
-        run: make build
+          sudo apt-get install -y build-essential git libx11-dev pasmo
+      - name: Build targetsim and boot real target ROM through IDE
+        run: make smoke

@@ -16,6 +16,7 @@
 #include "imsai-sio2.h"
 #include "imsai-hal.h"
 #include "unix_network.h"
+#include "target-ide.h"
 
 /* The upstream IMSAI HAL expects the machine layer to supply the connector
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
@@ -66,6 +67,11 @@ in_func_t *const port_in[256] = {
     [0x00] = console_io_status_in,
     [0x01] = imsai_sio1a_data_in,
 
+    /* S100Computers Dual IDE/CF V3 */
+    [0x30] = target_ide_a_in,
+    [0x31] = target_ide_b_in,
+    [0x32] = target_ide_c_in,
+
     /* MIO SIO subset. z80pack SIO2A already has the target's
      * TX-ready bit0 / RX-ready bit1 status convention.
      */
@@ -78,6 +84,13 @@ in_func_t *const port_in[256] = {
 out_func_t *const port_out[256] = {
     [0x01] = imsai_sio1a_data_out,
 
+    /* S100Computers Dual IDE/CF V3 */
+    [0x30] = target_ide_a_out,
+    [0x31] = target_ide_b_out,
+    [0x32] = target_ide_c_out,
+    [0x33] = target_ide_ctrl_out,
+    [0x34] = target_ide_drive_out,
+
     [0x42] = imsai_sio2a_data_out,
     [0x43] = imsai_sio2a_status_out,
 
@@ -88,6 +101,7 @@ void init_io(void)
 {
     imsai_sio_reset();
     hal_reset();
+    target_ide_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -96,11 +110,14 @@ void init_io(void)
 void reset_io(void)
 {
     imsai_sio_reset();
+    target_ide_reset();
 }
 
 void exit_io(void)
 {
     int i;
+
+    target_ide_exit();
 
     for (i = 0; i < NUMUSOC; i++) {
         if (ucons[i].ssc)
