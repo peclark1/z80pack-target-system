@@ -15,6 +15,11 @@ except ImportError:
     # Package import used by host-side tests.
     from .vte_compat import install_feed_child_string_compat
 
+try:
+    from rom_image import inspect_rom
+except ImportError:
+    from .rom_image import inspect_rom
+
 # app.py imports this module after loading VTE.  Normalize Ubuntu 24.04's
 # byte-array feed_child() binding so the GUI can send Ctrl-] as a Python str.
 install_feed_child_string_compat()
@@ -26,6 +31,7 @@ PROFILE_DSI_COMPAT = "dsi-compat"
 @dataclass
 class LaunchConfig:
     profile: str = PROFILE_TARGET
+    rom_image: str = ""
     cf0: str = ""
     cf1: str = ""
     dsi0: str = ""
@@ -62,6 +68,12 @@ class LaunchConfig:
             if value and not Path(value).expanduser().is_file():
                 errors.append(f"{label} image not found: {value}")
 
+        if self.profile == PROFILE_TARGET and self.rom_image:
+            try:
+                inspect_rom(self.rom_image)
+            except (OSError, ValueError) as exc:
+                errors.append(f"ROM image is not a valid 4K F000H image: {exc}")
+
         if self.profile == PROFILE_DSI_COMPAT and not self.dsi0:
             errors.append("DSI compatibility mode requires a DSI0 image")
 
@@ -82,8 +94,15 @@ class LaunchConfig:
 
         if self.profile == PROFILE_TARGET:
             # Explicit empty values suppress Makefile defaults when the user
-            # intentionally wants a DSI-only target session.
-            argv.extend([f"CF0={self.cf0}", f"CF1={self.cf1}"])
+            # intentionally wants a DSI-only target session. An empty
+            # ROM_IMAGE means use the pinned/current build/target-monitor.hex.
+            argv.extend(
+                [
+                    f"ROM_IMAGE={self.rom_image}",
+                    f"CF0={self.cf0}",
+                    f"CF1={self.cf1}",
+                ]
+            )
 
         argv.extend(
             [

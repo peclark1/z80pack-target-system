@@ -5,12 +5,14 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "gui"))
 
 import app as target_gui  # noqa: E402
+from rom_image import ROM_SIZE  # noqa: E402
 
 
 def drain_main_context_until(predicate, timeout: float = 5.0) -> None:
@@ -30,16 +32,34 @@ def main() -> None:
         raise RuntimeError("failed to register GTK application")
 
     window = target_gui.TargetSimWindow(application)
-    config = window._current_config()
     command = window.command.get_text()
 
     if "make -C" not in command or "CPU_MHZ=" not in command or "FP_PORT=" not in command:
         raise RuntimeError(f"unexpected GUI command preview: {command}")
     if "FP_FILE=" not in command:
         raise RuntimeError(f"GUI command does not enable live front-panel input: {command}")
+    if "ROM_IMAGE=" not in command:
+        raise RuntimeError(f"GUI command does not expose ROM selection: {command}")
 
     if window.terminal is None:
         raise RuntimeError("VTE terminal was not created")
+
+    # The graphical ROM row must accept a valid 4K binary, reflect it in the
+    # Makefile command, and return cleanly to the current pinned ROM.
+    with tempfile.TemporaryDirectory() as directory:
+        rom = Path(directory) / "alternate.bin"
+        rom.write_bytes(bytes([0xA5]) * ROM_SIZE)
+        window.rom_row.set_path(str(rom))
+        config = window._current_config()
+        if config.rom_image != str(rom):
+            raise RuntimeError("ROM selector did not update launch configuration")
+        if f"ROM_IMAGE={rom}" not in window.command.get_text():
+            raise RuntimeError("ROM selector did not update command preview")
+        if "4K binary ROM @ F000H" not in window.rom_row.info.get_text():
+            raise RuntimeError(f"ROM selector did not validate image: {window.rom_row.info.get_text()}")
+        window.rom_row._use_current(None)
+        if window._current_config().rom_image:
+            raise RuntimeError("Use Current did not clear alternate ROM selection")
 
     # The graphical IMSAI sense-switch bank must represent all eight FFH bits,
     # remain synchronized with the hexadecimal field, and update the live-value
@@ -99,7 +119,7 @@ def main() -> None:
 
     window.destroy()
     application.quit()
-    print("GTK GUI smoke test passed: switches, FileDialog, VTE spawn, and Stop all work")
+    print("GTK GUI smoke test passed: ROM selector, switches, FileDialog, VTE spawn, and Stop all work")
 
 
 if __name__ == "__main__":

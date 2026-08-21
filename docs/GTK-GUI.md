@@ -58,10 +58,35 @@ Saved GUI settings under `~/.config/z80pack-target-system/gui.json` are retained
 
 ### Machine
 
-- Target System — 60K RAM at `0000H-EFFFH` plus the current 4K monitor ROM at `F000H-FFFFH`
+- Target System — 60K RAM at `0000H-EFFFH` plus a selected 4K ROM at `F000H-FFFFH`
 - DSI Compatibility — full 64K RAM, no target ROM, automatic DSI bootstrap
 - CPU speed in MHz
 - IMSAI front-panel / sense-switch input byte returned by `IN FFH`
+
+### 4K ROM selection
+
+Target System mode includes a **4K ROM @ F000H** selector. Leaving it blank, or pressing **Use Current**, uses the pinned/current ROM produced as `build/target-monitor.hex`.
+
+**Browse…** accepts either:
+
+- an exact 4096-byte logical ROM binary, or
+- Intel HEX containing exactly `F000H-FFFFH`
+
+The GUI validates the selected image and displays a short SHA-256 identifier. The source image is never modified. At launch, the selected ROM is normalized and staged as `build/run-rom/target-monitor.hex`; targetsim is pointed at that isolated directory for the session. Returning to **Use Current** immediately restores the normal pinned-ROM behavior.
+
+The same capability is available from the command line:
+
+```sh
+make run ROM_IMAGE=/path/to/alternate-4k.bin
+```
+
+or:
+
+```sh
+make run ROM_IMAGE=/path/to/alternate-4k.hex
+```
+
+ROM selection is disabled in DSI Compatibility mode because that profile intentionally provides full 64K RAM with no ROM window.
 
 ### Graphical IMSAI sense switches
 
@@ -122,7 +147,13 @@ The last GUI configuration is stored in:
 ~/.config/z80pack-target-system/gui.json
 ```
 
-Disk images themselves are never copied into the configuration directory. Only their selected paths and GUI options are saved.
+Window size/maximized/divider state is stored separately in:
+
+```text
+~/.config/z80pack-target-system/window.json
+```
+
+Disk and ROM images themselves are never copied into the configuration directory. Only their selected paths and GUI options are saved. On GTK4/Wayland, absolute top-level X/Y window placement remains compositor-managed.
 
 ## Planned enhancements
 
@@ -130,7 +161,7 @@ The GUI intentionally remains a thin front end over the existing Makefile/emulat
 
 - named saved machine profiles
 - separate emulator trace/log view so tracing does not clutter the CP/M terminal
-- ROM revision and SHA display
+- richer ROM revision/build metadata for the pinned firmware
 - disk SHA-256 on demand
 - dedicated reset / boot-source actions
 - a more complete IMSAI front-panel visualization beyond the sense-switch bank

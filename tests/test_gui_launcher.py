@@ -9,12 +9,14 @@ from gui.launcher import (
     load_config,
     save_config,
 )
+from gui.rom_image import ROM_SIZE
 
 
 class GuiLauncherTests(unittest.TestCase):
     def test_target_command_uses_make_interface(self):
         cfg = LaunchConfig(
             profile=PROFILE_TARGET,
+            rom_image="/tmp/monitor.bin",
             cf0="/tmp/a.img",
             cf1="/tmp/b.img",
             dsi0="/tmp/dsi.img",
@@ -26,6 +28,7 @@ class GuiLauncherTests(unittest.TestCase):
         )
         argv = cfg.make_argv(Path("/repo"))
         self.assertEqual(argv[:4], ["make", "-C", "/repo", "run"])
+        self.assertIn("ROM_IMAGE=/tmp/monitor.bin", argv)
         self.assertIn("CF0=/tmp/a.img", argv)
         self.assertIn("IDE_TRACE=1", argv)
         self.assertIn("DSI_WRITE=1", argv)
@@ -33,16 +36,22 @@ class GuiLauncherTests(unittest.TestCase):
         self.assertIn("FP_PORT=02", argv)
         self.assertIn("CPU_MHZ=8", argv)
 
-    def test_target_command_can_explicitly_disable_cf(self):
+    def test_target_command_can_explicitly_use_current_rom_and_disable_cf(self):
         cfg = LaunchConfig(profile=PROFILE_TARGET, dsi0="/tmp/dsi.img")
         argv = cfg.make_argv(Path("/repo"))
+        self.assertIn("ROM_IMAGE=", argv)
         self.assertIn("CF0=", argv)
         self.assertIn("CF1=", argv)
 
-    def test_dsi_compat_uses_dsi_compat_target(self):
-        cfg = LaunchConfig(profile=PROFILE_DSI_COMPAT, dsi0="/tmp/dsi.img")
+    def test_dsi_compat_uses_dsi_compat_target_and_no_rom(self):
+        cfg = LaunchConfig(
+            profile=PROFILE_DSI_COMPAT,
+            rom_image="/tmp/ignored.bin",
+            dsi0="/tmp/dsi.img",
+        )
         argv = cfg.make_argv(Path("/repo"))
         self.assertEqual(argv[:4], ["make", "-C", "/repo", "dsi-compat"])
+        self.assertFalse(any(item.startswith("ROM_IMAGE=") for item in argv))
         self.assertNotIn("CF0=", argv)
 
     def test_validation_rejects_bad_front_panel_value(self):
@@ -50,11 +59,22 @@ class GuiLauncherTests(unittest.TestCase):
             cfg = LaunchConfig(profile=PROFILE_TARGET, dsi0=disk.name, fp_port="XYZ")
             self.assertTrue(any("front-panel" in error for error in cfg.validate()))
 
+    def test_validation_rejects_wrong_sized_rom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disk = root / "disk.img"
+            disk.write_bytes(b"disk")
+            rom = root / "bad.bin"
+            rom.write_bytes(b"x" * (ROM_SIZE - 1))
+            cfg = LaunchConfig(profile=PROFILE_TARGET, dsi0=str(disk), rom_image=str(rom))
+            self.assertTrue(any("ROM image" in error for error in cfg.validate()))
+
     def test_settings_round_trip_but_dsi_write_resets(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gui.json"
             cfg = LaunchConfig(
                 profile=PROFILE_DSI_COMPAT,
+                rom_image="monitor.bin",
                 dsi0="disk.img",
                 cpu_mhz=6,
                 dsi_write=True,
@@ -62,6 +82,7 @@ class GuiLauncherTests(unittest.TestCase):
             save_config(cfg, path)
             loaded = load_config(path)
             self.assertEqual(loaded.profile, PROFILE_DSI_COMPAT)
+            self.assertEqual(loaded.rom_image, "monitor.bin")
             self.assertEqual(loaded.dsi0, "disk.img")
             self.assertEqual(loaded.cpu_mhz, 6)
             self.assertFalse(loaded.dsi_write)
