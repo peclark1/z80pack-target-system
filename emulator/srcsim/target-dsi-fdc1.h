@@ -3,12 +3,10 @@
  *
  * Software-visible ports on the documented Altair-compatible interface:
  *   7Dh OUT  DMA address low byte
+ *   7Eh IN   invoke FDC bootstrap (track 0 sector 1 -> 0000h-007Fh)
  *   7Eh OUT  DMA address high byte
  *   7Fh IN   status
  *   7Fh OUT  command
- *
- * The separate HB interface software-bootstrap/restart input associated with
- * IN 7Eh is intentionally not part of the initial secondary-disk model.
  */
 
 #ifndef TARGET_DSI_FDC1_H
@@ -20,6 +18,7 @@ void target_dsi_fdc1_init(void);
 void target_dsi_fdc1_reset(void);
 void target_dsi_fdc1_exit(void);
 
+BYTE target_dsi_fdc1_bootstrap_in(void);
 BYTE target_dsi_fdc1_status_in(void);
 void target_dsi_fdc1_dma_low_out(BYTE data);
 void target_dsi_fdc1_dma_high_out(BYTE data);
