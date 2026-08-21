@@ -23,13 +23,14 @@ TARGET_INPUTS := \
 	scripts/bootstrap-z80pack.sh \
 	scripts/prepare-targetsim.sh \
 	emulator/conf/system.conf \
+	emulator/conf/dsi-compat.conf \
 	emulator/srcsim/simio.c \
 	emulator/srcsim/target-ide.c \
 	emulator/srcsim/target-ide.h \
 	emulator/srcsim/target-dsi-fdc1.c \
 	emulator/srcsim/target-dsi-fdc1.h
 
-.PHONY: help bootstrap prepare rom current-rom build run cf-work cf-reset lab smoke-cf smoke test clean
+.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke test clean
 
 help:
 	@printf '%s\n' \
@@ -42,7 +43,8 @@ help:
 	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
 	  'make run DSI0=/path/sd.img         Attach DSI FDC-1 SD drive A read-only' \
 	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
-	  '                                   Preload T0/S1 into 0000H-007FH like the real DSI reset bootstrap' \
+	  '                                   Preload T0/S1 into 0000H-007FH while retaining target ROM/map' \
+	  'make dsi-compat DSI0=/path/sd.img Run historical DSI image with 64K RAM/no target ROM' \
 	  'make run DSI0=/path/a.img DSI1=/path/b.img DSI_TRACE=1' \
 	  '                                   Attach/trace two DSI SD drives' \
 	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
@@ -52,7 +54,9 @@ help:
 	  '                                   First setup/build, then run the CP/M 3 lab' \
 	  'make smoke                         Real-ROM IDE boot regression' \
 	  'make test                          Run host-side regression tests' \
-	  'make clean                         Remove all generated build output/work images'
+	  'make clean                         Remove all generated build output/work images' \
+	  '' \
+	  'Interactive targetsim sessions: press Ctrl-] for a clean emulator exit.'
 
 bootstrap:
 	bash scripts/bootstrap-z80pack.sh
@@ -90,17 +94,27 @@ run:
 		echo 'error: build/target-monitor.hex is missing; run make lab or make current-rom first' >&2; \
 		exit 2; \
 	fi
-	@if [ ! -f "$(CF0)" ]; then \
-		echo 'error: CF0 image not found: $(CF0)' >&2; \
-		echo '       run make lab CF0_SOURCE=/path/to/reference.img first' >&2; \
+	@if [ ! -f "$(CF0)" ] && { [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; }; then \
+		echo 'error: neither a CF0 image nor a DSI0 image is available' >&2; \
+		echo '       run make lab CF0_SOURCE=/path/to/reference.img or set DSI0=/path/to/sd.img' >&2; \
 		exit 2; \
 	fi
-	TARGET_CF0="$(abspath $(CF0))" \
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
-	sh -c 'if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+
+dsi-compat: build
+	@if [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; then \
+		echo 'error: set DSI0 to a 256256-byte 77x26x128 single-density image' >&2; \
+		exit 2; \
+	fi
+	TARGET_DSI0="$(abspath $(DSI0))" \
+	TARGET_DSI_TRACE="$(DSI_TRACE)" \
+	TARGET_DSI_WRITE="$(DSI_WRITE)" \
+	TARGET_DSI_BOOTSTRAP=1 \
+	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/dsi-compat.conf'
 
 cf-work:
 	@if [ -z "$(CF0_SOURCE)" ]; then \
