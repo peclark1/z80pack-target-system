@@ -9,6 +9,16 @@ import json
 import shlex
 from typing import Any
 
+try:
+    from vte_compat import install_feed_child_string_compat
+except ImportError:
+    # Package import used by host-side tests.
+    from .vte_compat import install_feed_child_string_compat
+
+# app.py imports this module after loading VTE.  Normalize Ubuntu 24.04's
+# byte-array feed_child() binding so the GUI can send Ctrl-] as a Python str.
+install_feed_child_string_compat()
+
 PROFILE_TARGET = "target"
 PROFILE_DSI_COMPAT = "dsi-compat"
 
