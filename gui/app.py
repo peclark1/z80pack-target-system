@@ -13,7 +13,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
-from gi.repository import GLib, Gtk, Vte  # noqa: E402
+from gi.repository import Gio, GLib, Gtk, Vte  # noqa: E402
 
 from image_info import DSI_SD_SIZE, inspect_image  # noqa: E402
 from launcher import (  # noqa: E402
@@ -48,6 +48,7 @@ class ImageRow(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.on_change = on_change
         self.work_copy = work_copy
+        self._file_dialog = None
 
         label = Gtk.Label(label=title, xalign=0)
         label.add_css_class("heading")
@@ -97,23 +98,39 @@ class ImageRow(Gtk.Box):
             self.info.set_text("Image not found")
 
     def _browse(self, _button) -> None:
-        chooser = Gtk.FileChooserNative.new(
-            "Select disk image",
-            self.get_root(),
-            Gtk.FileChooserAction.OPEN,
-            "Select",
-            "Cancel",
-        )
-        chooser.connect("response", self._browse_response)
-        chooser.show()
+        """Open GTK4's asynchronous file dialog.
 
-    def _browse_response(self, chooser, response) -> None:
-        if response == Gtk.ResponseType.ACCEPT:
-            selected = chooser.get_file()
-            path = selected.get_path() if selected else None
-            if path:
-                self.set_path(path)
-        chooser.destroy()
+        Gtk.FileChooserNative triggered GTK file-system-model assertions and a
+        segfault on a real Ubuntu 24.04 desktop. FileDialog is the GTK4-native
+        replacement and avoids the legacy chooser model. Keep a reference on
+        the ImageRow until the asynchronous operation finishes.
+        """
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Select disk image")
+
+        current = self.get_path()
+        if current:
+            candidate = Path(current).expanduser()
+            if candidate.is_file():
+                dialog.set_initial_file(Gio.File.new_for_path(str(candidate.resolve())))
+            elif candidate.parent.is_dir():
+                dialog.set_initial_folder(Gio.File.new_for_path(str(candidate.parent.resolve())))
+
+        self._file_dialog = dialog
+        dialog.open(self.get_root(), None, self._browse_response)
+
+    def _browse_response(self, dialog, result) -> None:
+        try:
+            selected = dialog.open_finish(result)
+        except GLib.Error:
+            # Cancel is reported as a normal GError by the async API.
+            return
+        finally:
+            self._file_dialog = None
+
+        path = selected.get_path() if selected else None
+        if path:
+            self.set_path(path)
 
     def _make_work_copy(self, _button) -> None:
         if self.work_copy is None:
@@ -147,7 +164,6 @@ class TargetSimWindow(Gtk.ApplicationWindow):
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.set_child(root)
-
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         paned.set_position(390)
         paned.set_vexpand(True)
