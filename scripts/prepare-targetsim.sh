@@ -19,6 +19,11 @@ sed -i 's/^#define CPU_SPEED 2/#define CPU_SPEED 4/' "$TARGET/srcsim/sim.h"
 sed -i 's/^#define MACHINE "imsai"/#define MACHINE "target"/' "$TARGET/srcsim/sim.h"
 sed -i 's/IMSAI 8080 Simulation/IMSAI Target System Simulation/' "$TARGET/srcsim/sim.h"
 
+# The physical target currently has one CPU-visible 64K address space only.
+# Disable inherited IMSAI MPU-B banked-ROM behavior and report no MMU banks.
+sed -i 's/^#define HAS_BANKED_ROM/\/\* #define HAS_BANKED_ROM \*\//' "$TARGET/srcsim/sim.h"
+sed -i 's/^int num_banks = sizeof(banks) \/ sizeof(BYTE \*) - 1;$/int num_banks = 0;/' "$TARGET/srcsim/simmem.c"
+
 # Replace the machine-specific I/O dispatch and add target-only devices.
 cp "$ROOT/emulator/srcsim/simio.c" "$TARGET/srcsim/simio.c"
 cp "$ROOT/emulator/srcsim/target-ide.c" "$TARGET/srcsim/target-ide.c"
