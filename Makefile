@@ -154,7 +154,7 @@ lab: build current-rom cf-work
 	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" CPU_MHZ="$(CPU_MHZ)"
 
 gui:
-	$(PYTHON) gui/targetsim_gui.py
+	$(PYTHON) gui/app.py
 
 gui-deps:
 	sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-vte-3.91 desktop-file-utils
