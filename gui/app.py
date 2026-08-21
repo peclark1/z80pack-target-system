@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
 from gi.repository import Gio, GLib, Gtk, Vte  # noqa: E402
 
+from front_panel import (  # noqa: E402
+    console_name,
+    parse_hex_byte,
+    switch_states,
+    value_from_states,
+)
 from image_info import DSI_SD_SIZE, inspect_image  # noqa: E402
 from launcher import (  # noqa: E402
     PROFILE_DSI_COMPAT,
@@ -26,6 +33,7 @@ from launcher import (  # noqa: E402
 
 APP_ID = "com.peclark.z80pack-target-system"
 REPO_ROOT = Path(__file__).resolve().parents[1]
+FRONT_PANEL_STATE = REPO_ROOT / "build" / "gui-front-panel.hex"
 
 
 def next_work_path(prefix: str) -> Path:
@@ -151,12 +159,16 @@ class ImageRow(Gtk.Box):
 class TargetSimWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application):
         super().__init__(application=app, title="IMSAI Target System")
-        self.set_default_size(1180, 760)
+        self.set_default_size(1280, 800)
         self.config = load_config()
         self.running = False
         self.pending_restart = False
         self.session_is_emulator = False
         self.initializing = True
+        self._syncing_front_panel = False
+        self.fp_switch_buttons: dict[int, Gtk.ToggleButton] = {}
+        self.fp_switch_state_labels: dict[int, Gtk.Label] = {}
+        self.front_panel_state_path = FRONT_PANEL_STATE
 
         header = Gtk.HeaderBar()
         header.set_show_title_buttons(True)
@@ -165,13 +177,13 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.set_child(root)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(390)
+        paned.set_position(450)
         paned.set_vexpand(True)
         root.append(paned)
 
         settings_scroll = Gtk.ScrolledWindow()
         settings_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        settings_scroll.set_min_content_width(340)
+        settings_scroll.set_min_content_width(410)
         paned.set_start_child(settings_scroll)
 
         settings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -202,12 +214,15 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         self.fp_port.set_width_chars(4)
         self.fp_port.set_text(self.config.fp_port)
         self.fp_port.set_tooltip_text(
-            "IN FFH value. Low bits: 00 Console I/O, 01 Serial I/O A, 02 MIO."
+            "IN FFH value. Edit the byte or click the graphical sense switches below."
         )
-        self.fp_port.connect("changed", self._controls_changed)
+        self.fp_port.connect("changed", self._fp_entry_changed)
         machine_grid.attach(Gtk.Label(label="Front panel FFH", xalign=0), 0, 1, 1, 1)
         machine_grid.attach(self.fp_port, 1, 1, 1, 1)
         settings.append(machine_grid)
+
+        settings.append(self._build_front_panel_bank())
+        self._sync_front_panel_from_entry()
 
         settings.append(Gtk.Separator())
         settings.append(self._section_label("IDE / CF"))
@@ -338,6 +353,118 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         box.append(widget)
         return box
 
+    def _build_front_panel_bank(self) -> Gtk.Frame:
+        frame = Gtk.Frame()
+        frame.set_label("IMSAI Sense Switches — IN FFH")
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        body.set_margin_top(8)
+        body.set_margin_bottom(8)
+        body.set_margin_start(8)
+        body.set_margin_end(8)
+        frame.set_child(body)
+
+        hint = Gtk.Label(label="UP = 1     DOWN = 0", xalign=0)
+        hint.add_css_class("dim-label")
+        body.append(hint)
+
+        bank = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bank.set_halign(Gtk.Align.START)
+        body.append(bank)
+
+        for bit in range(7, -1, -1):
+            column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            column.set_halign(Gtk.Align.CENTER)
+
+            bit_label = Gtk.Label(label=str(bit))
+            bit_label.add_css_class("heading")
+            column.append(bit_label)
+
+            switch = Gtk.ToggleButton(label="▼")
+            switch.set_size_request(38, 54)
+            switch.set_tooltip_text(f"Sense switch {bit}; click to toggle bit {bit}")
+            switch.connect("toggled", self._fp_switch_toggled, bit)
+            column.append(switch)
+
+            state_label = Gtk.Label(label="0")
+            state_label.add_css_class("dim-label")
+            column.append(state_label)
+
+            self.fp_switch_buttons[bit] = switch
+            self.fp_switch_state_labels[bit] = state_label
+            bank.append(column)
+
+        summary = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.fp_value_label = Gtk.Label(label="FFH = 00", xalign=0)
+        self.fp_value_label.add_css_class("heading")
+        summary.append(self.fp_value_label)
+
+        self.fp_console_label = Gtk.Label(label="Console select: Console I/O", xalign=0)
+        self.fp_console_label.set_hexpand(True)
+        self.fp_console_label.add_css_class("dim-label")
+        summary.append(self.fp_console_label)
+        body.append(summary)
+
+        live = Gtk.Label(
+            label="Switch changes are live while targetsim is running; the next IN FFH reads the new value.",
+            xalign=0,
+        )
+        live.set_wrap(True)
+        live.add_css_class("dim-label")
+        body.append(live)
+
+        return frame
+
+    def _front_panel_value(self) -> int | None:
+        try:
+            return parse_hex_byte(self.fp_port.get_text())
+        except (ValueError, TypeError):
+            return None
+
+    def _write_front_panel_state(self, value: int) -> None:
+        try:
+            self.front_panel_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.front_panel_state_path.write_text(f"{value:02X}\n", encoding="ascii")
+        except OSError:
+            # FP_PORT remains the fallback if the live-value file is unavailable.
+            pass
+
+    def _sync_front_panel_from_entry(self) -> None:
+        value = self._front_panel_value()
+        if value is None:
+            self.fp_value_label.set_text("FFH = --")
+            self.fp_console_label.set_text("Console select: invalid FFH value")
+            return
+
+        states = switch_states(value)
+        self._syncing_front_panel = True
+        try:
+            for bit, switch in self.fp_switch_buttons.items():
+                active = states[bit]
+                switch.set_active(active)
+                switch.set_label("▲" if active else "▼")
+                self.fp_switch_state_labels[bit].set_text("1" if active else "0")
+        finally:
+            self._syncing_front_panel = False
+
+        self.fp_value_label.set_text(f"FFH = {value:02X}")
+        self.fp_console_label.set_text(f"Console select: {console_name(value)}")
+        self._write_front_panel_state(value)
+
+    def _fp_entry_changed(self, *_args) -> None:
+        self._sync_front_panel_from_entry()
+        self._controls_changed()
+
+    def _fp_switch_toggled(self, button: Gtk.ToggleButton, bit: int) -> None:
+        if self._syncing_front_panel:
+            return
+
+        button.set_label("▲" if button.get_active() else "▼")
+        self.fp_switch_state_labels[bit].set_text("1" if button.get_active() else "0")
+        states = {number: switch.get_active() for number, switch in self.fp_switch_buttons.items()}
+        value = value_from_states(states)
+        self.fp_port.set_text(f"{value:02X}")
+
     def _current_config(self) -> LaunchConfig:
         return LaunchConfig(
             profile=PROFILE_DSI_COMPAT if self.profile.get_selected() == 1 else PROFILE_TARGET,
@@ -353,11 +480,16 @@ class TargetSimWindow(Gtk.ApplicationWindow):
             cpu_mhz=int(self.cpu_speed.get_value()),
         )
 
+    def _session_argv(self, config: LaunchConfig) -> list[str]:
+        argv = config.make_argv(REPO_ROOT)
+        argv.append(f"FP_FILE={self.front_panel_state_path}")
+        return argv
+
     def _controls_changed(self, *_args) -> None:
         if self.initializing:
             return
         config = self._current_config()
-        self.command.set_text(config.shell_command(REPO_ROOT))
+        self.command.set_text(shlex.join(self._session_argv(config)))
         try:
             save_config(config)
         except OSError:
@@ -438,7 +570,11 @@ class TargetSimWindow(Gtk.ApplicationWindow):
             message = "Configuration error:\r\n  " + "\r\n  ".join(errors) + "\r\n"
             self.terminal.feed(message.encode("utf-8"), -1)
             return False
-        self._spawn(config.make_argv(REPO_ROOT), "Starting…", True)
+
+        value = self._front_panel_value()
+        if value is not None:
+            self._write_front_panel_state(value)
+        self._spawn(self._session_argv(config), "Starting…", True)
         return False
 
     def _build(self, _button) -> None:
