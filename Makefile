@@ -15,6 +15,7 @@ DSI0 ?=
 DSI1 ?=
 DSI_TRACE ?= 0
 DSI_WRITE ?= 0
+DSI_BOOTSTRAP ?= 0
 SMOKE_CF := build/smoke-cf0.img
 
 TARGET_INPUTS := \
@@ -40,6 +41,8 @@ help:
 	  'make run                           Restart existing lab work images immediately' \
 	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
 	  'make run DSI0=/path/sd.img         Attach DSI FDC-1 SD drive A read-only' \
+	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
+	  '                                   Preload T0/S1 into 0000H-007FH like the real DSI reset bootstrap' \
 	  'make run DSI0=/path/a.img DSI1=/path/b.img DSI_TRACE=1' \
 	  '                                   Attach/trace two DSI SD drives' \
 	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
@@ -96,6 +99,7 @@ run:
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
+	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
 	sh -c 'if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
 
 cf-work:
@@ -123,7 +127,7 @@ cf-reset:
 	@echo 'disposable CF work copies removed; reference images were not touched'
 
 lab: build current-rom cf-work
-	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)"
+	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)"
 
 smoke-cf:
 	$(PYTHON) tools/make_smoke_cf.py "$(SMOKE_CF)"
