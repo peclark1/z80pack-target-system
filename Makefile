@@ -3,39 +3,53 @@ ROM_BIN ?=
 ROM_HEX := build/target-monitor.hex
 TARGET_DIR := build/z80pack-upstream/targets100sim
 TARGET_BIN := $(TARGET_DIR)/targetsim
-CF0 ?= disks/cf0.img
-CF1 ?= disks/cf1.img
-CF0_SOURCE ?=
-CF1_SOURCE ?=
+TARGET_PREPARED := $(TARGET_DIR)/.target-prepared
 CF0_WORK := build/cf0-work.img
 CF1_WORK := build/cf1-work.img
+CF0 ?= $(CF0_WORK)
+CF1 ?= $(CF1_WORK)
+CF0_SOURCE ?=
+CF1_SOURCE ?=
 IDE_TRACE ?= 0
 SMOKE_CF := build/smoke-cf0.img
 
-.PHONY: help bootstrap prepare rom current-rom build run cf-work lab smoke-cf smoke test clean
+TARGET_INPUTS := \
+	Makefile \
+	scripts/bootstrap-z80pack.sh \
+	scripts/prepare-targetsim.sh \
+	emulator/conf/system.conf \
+	emulator/srcsim/simio.c \
+	emulator/srcsim/target-ide.c \
+	emulator/srcsim/target-ide.h
+
+.PHONY: help bootstrap prepare rom current-rom build run cf-work cf-reset lab smoke-cf smoke test clean
 
 help:
 	@printf '%s\n' \
 	  'make bootstrap                     Fetch pinned z80pack upstream' \
-	  'make prepare                       Create target-machine source overlay' \
+	  'make prepare                       Refresh target-machine overlay only when inputs changed' \
 	  'make rom ROM_BIN=/path/monitor.bin Convert logical 4K ROM to Intel HEX' \
-	  'make current-rom                   Build pinned target ROM project revision' \
-	  'make build                         Build the targetsim emulator' \
-	  'make run                           Run with disks/cf0.img and optional disks/cf1.img' \
-	  'make run IDE_TRACE=1               Run with IDE command tracing enabled' \
+	  'make current-rom                   Build pinned target ROM only when needed' \
+	  'make build                         Incrementally build targetsim' \
+	  'make run                           Restart existing lab work images immediately' \
+	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
 	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
-	  '                                   Make writable full-geometry CF work copies' \
+	  '                                   Create work copies only if they do not exist' \
+	  'make cf-reset                      Delete disposable lab work copies' \
 	  'make lab CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
-	  '                                   Build ROM/emulator and run writable CP/M 3 lab' \
+	  '                                   First setup/build, then run the CP/M 3 lab' \
 	  'make smoke                         Real-ROM IDE boot regression' \
 	  'make test                          Run host-side regression tests' \
-	  'make clean                         Remove generated build output'
+	  'make clean                         Remove all generated build output/work images'
 
 bootstrap:
 	bash scripts/bootstrap-z80pack.sh
 
-prepare:
+$(TARGET_PREPARED): $(TARGET_INPUTS)
 	bash scripts/prepare-targetsim.sh
+	@touch "$@"
+
+prepare: $(TARGET_PREPARED)
 
 rom:
 	@if [ -z "$(ROM_BIN)" ]; then \
@@ -45,43 +59,60 @@ rom:
 	$(PYTHON) tools/bin2ihex.py "$(ROM_BIN)" "$(ROM_HEX)"
 	@echo "wrote $(ROM_HEX)"
 
-current-rom:
+$(ROM_HEX): scripts/build-current-rom.sh tools/bin2ihex.py
 	bash scripts/build-current-rom.sh
 
-build: prepare
+current-rom: $(ROM_HEX)
+
+$(TARGET_BIN): $(TARGET_PREPARED)
 	$(MAKE) -C "$(TARGET_DIR)/srcsim" FRONTPANEL=NO INFOPANEL=NO build
+
+build: $(TARGET_BIN)
 
 run:
 	@if [ ! -x "$(TARGET_BIN)" ]; then \
-		echo 'error: targetsim is not built; run make build first' >&2; \
+		echo 'error: targetsim is not built; run make lab or make build first' >&2; \
 		exit 2; \
 	fi
 	@if [ ! -f "$(ROM_HEX)" ]; then \
-		echo 'error: build/target-monitor.hex is missing; run make rom ROM_BIN=...' >&2; \
+		echo 'error: build/target-monitor.hex is missing; run make lab or make current-rom first' >&2; \
 		exit 2; \
 	fi
 	@if [ ! -f "$(CF0)" ]; then \
 		echo 'error: CF0 image not found: $(CF0)' >&2; \
+		echo '       run make lab CF0_SOURCE=/path/to/reference.img first' >&2; \
 		exit 2; \
 	fi
 	TARGET_CF0="$(abspath $(CF0))" \
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
-	sh -c 'if [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+	sh -c 'if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
 
 cf-work:
 	@if [ -z "$(CF0_SOURCE)" ]; then \
 		echo 'error: set CF0_SOURCE to the archived/reference CF image' >&2; \
 		exit 2; \
 	fi
-	$(PYTHON) tools/make_cf_workcopy.py "$(CF0_SOURCE)" "$(CF0_WORK)"
-	@if [ -n "$(CF1_SOURCE)" ]; then \
-		$(PYTHON) tools/make_cf_workcopy.py "$(CF1_SOURCE)" "$(CF1_WORK)"; \
+	@if [ -f "$(CF0_WORK)" ]; then \
+		echo 'preserving existing $(CF0_WORK)'; \
+		echo '  use make cf-reset before changing CF0_SOURCE'; \
 	else \
-		rm -f "$(CF1_WORK)"; \
+		$(PYTHON) tools/make_cf_workcopy.py "$(CF0_SOURCE)" "$(CF0_WORK)"; \
+	fi
+	@if [ -n "$(CF1_SOURCE)" ]; then \
+		if [ -f "$(CF1_WORK)" ]; then \
+			echo 'preserving existing $(CF1_WORK)'; \
+			echo '  use make cf-reset before changing CF1_SOURCE'; \
+		else \
+			$(PYTHON) tools/make_cf_workcopy.py "$(CF1_SOURCE)" "$(CF1_WORK)"; \
+		fi; \
 	fi
 
+cf-reset:
+	rm -f "$(CF0_WORK)" "$(CF1_WORK)"
+	@echo 'disposable CF work copies removed; reference images were not touched'
+
 lab: build current-rom cf-work
-	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(CF1_WORK)" IDE_TRACE="$(IDE_TRACE)"
+	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)"
 
 smoke-cf:
 	$(PYTHON) tools/make_smoke_cf.py "$(SMOKE_CF)"
