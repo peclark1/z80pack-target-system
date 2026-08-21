@@ -16,6 +16,32 @@ jobs:
       - name: Run host-side tests
         run: make test
 
+  gui-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK4/VTE test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-gi \
+            python3-gi-cairo \
+            gir1.2-gtk-4.0 \
+            gir1.2-vte-3.91 \
+            desktop-file-utils \
+            xvfb \
+            xauth
+      - name: Construct GTK4/VTE application under Xvfb
+        run: xvfb-run -a /usr/bin/python3 tools/run_gui_smoke.py
+      - name: Test Ubuntu desktop installation
+        run: |
+          export HOME="$RUNNER_TEMP/gui-home"
+          mkdir -p "$HOME"
+          make gui-install
+          test -x "$HOME/.local/bin/imsai-target-system"
+          desktop-file-validate "$HOME/.local/share/applications/com.peclark.z80pack-target-system.desktop"
+          make gui-uninstall
+
   targetsim-build-and-boot:
     runs-on: ubuntu-latest
     steps:

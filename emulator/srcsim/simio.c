@@ -6,6 +6,7 @@
  * them.
  */
 
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "sim.h"
@@ -71,6 +72,20 @@ static void front_panel_out(BYTE data)
     UNUSED(data);
 }
 
+static void apply_runtime_overrides(void)
+{
+    const char *value = getenv("TARGET_FP_PORT");
+    char *end = NULL;
+    long parsed;
+
+    if (value == NULL || *value == '\0')
+        return;
+
+    parsed = strtol(value, &end, 16);
+    if (end != value && *end == '\0' && parsed >= 0 && parsed <= 0xff)
+        fp_port = (BYTE) parsed;
+}
+
 /* Unused by the target overlay, but declared by the inherited IMSAI simio.h
  * and referenced by optional upstream web-front-end code.
  */
@@ -129,6 +144,7 @@ out_func_t *const port_out[256] = {
 
 void init_io(void)
 {
+    apply_runtime_overrides();
     imsai_sio_reset();
     hal_reset();
     target_ide_init();

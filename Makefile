@@ -16,6 +16,8 @@ DSI1 ?=
 DSI_TRACE ?= 0
 DSI_WRITE ?= 0
 DSI_BOOTSTRAP ?= 0
+FP_PORT ?= 00
+CPU_MHZ ?= 4
 SMOKE_CF := build/smoke-cf0.img
 SMOKE_DSI := build/smoke-dsi.img
 
@@ -31,7 +33,7 @@ TARGET_INPUTS := \
 	emulator/srcsim/target-dsi-fdc1.c \
 	emulator/srcsim/target-dsi-fdc1.h
 
-.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-dsi smoke test clean
+.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
 
 help:
 	@printf '%s\n' \
@@ -41,6 +43,7 @@ help:
 	  'make current-rom                   Build pinned target ROM only when needed' \
 	  'make build                         Incrementally build targetsim' \
 	  'make run                           Restart existing lab work images immediately' \
+	  'make run CPU_MHZ=4 FP_PORT=00      Set CPU speed and IMSAI FFH input byte' \
 	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
 	  'make run DSI0=/path/sd.img         Attach DSI FDC-1 SD drive A read-only' \
 	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
@@ -53,6 +56,10 @@ help:
 	  'make cf-reset                      Delete disposable lab work copies' \
 	  'make lab CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
 	  '                                   First setup/build, then run the CP/M 3 lab' \
+	  'make gui                           Launch the GTK4/VTE front end' \
+	  'make gui-deps                      Install Ubuntu GTK4/VTE GUI dependencies' \
+	  'make gui-install                   Install Ubuntu application/menu launcher for this checkout' \
+	  'make gui-uninstall                 Remove the installed application/menu launcher' \
 	  'make smoke                         Run IDE/ROM and DSI FDC-1 boot regressions' \
 	  'make test                          Run host-side regression tests' \
 	  'make clean                         Remove all generated build output/work images' \
@@ -104,7 +111,8 @@ run:
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
-	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+	TARGET_FP_PORT="$(FP_PORT)" \
+	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(abspath build)"'
 
 dsi-compat: build
 	@if [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; then \
@@ -115,7 +123,8 @@ dsi-compat: build
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP=1 \
-	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/dsi-compat.conf'
+	TARGET_FP_PORT="$(FP_PORT)" \
+	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/dsi-compat.conf'
 
 cf-work:
 	@if [ -z "$(CF0_SOURCE)" ]; then \
@@ -142,7 +151,19 @@ cf-reset:
 	@echo 'disposable CF work copies removed; reference images were not touched'
 
 lab: build current-rom cf-work
-	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)"
+	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" CPU_MHZ="$(CPU_MHZ)"
+
+gui:
+	$(PYTHON) gui/app.py
+
+gui-deps:
+	sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-vte-3.91 desktop-file-utils
+
+gui-install:
+	bash scripts/install-gui.sh
+
+gui-uninstall:
+	bash scripts/uninstall-gui.sh
 
 smoke-cf:
 	$(PYTHON) tools/make_smoke_cf.py "$(SMOKE_CF)"
