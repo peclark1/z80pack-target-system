@@ -402,7 +402,6 @@ class TargetSimWindow(Gtk.ApplicationWindow):
             GLib.SpawnFlags.DEFAULT,
             None,
             None,
-            None,
             -1,
             None,
             self._spawn_finished,

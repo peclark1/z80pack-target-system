@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-"""Instantiate the real GTK4/VTE GUI under Xvfb for CI."""
+"""Exercise the real GTK4/VTE GUI under Xvfb for CI."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "gui"))
 
 import app as target_gui  # noqa: E402
+
+
+def drain_main_context_until(predicate, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    context = target_gui.GLib.MainContext.default()
+    while not predicate():
+        while context.pending():
+            context.iteration(False)
+        if time.monotonic() >= deadline:
+            raise RuntimeError("timed out waiting for GTK/VTE asynchronous operation")
+        time.sleep(0.01)
 
 
 def main() -> None:
@@ -36,9 +48,21 @@ def main() -> None:
     if dialog.get_title() != "Disk-image browse smoke test":
         raise RuntimeError("Gtk.FileDialog could not be constructed/configured")
 
+    # Exercise the exact Vte.Terminal.spawn_async() call used by Start/Build.
+    # A previous smoke test only constructed the terminal, which allowed an
+    # argument-order error in spawn_async() to reach a real desktop.
+    window._spawn(
+        ["/bin/sh", "-c", "printf 'VTE SPAWN OK\\n'"],
+        "VTE spawn smoke test…",
+        False,
+    )
+    drain_main_context_until(lambda: not window.running)
+    if window.status.get_text() != "Build complete":
+        raise RuntimeError(f"VTE child did not complete cleanly: {window.status.get_text()}")
+
     window.destroy()
     application.quit()
-    print("GTK GUI smoke test passed: GTK4/VTE window, controls, and FileDialog constructed")
+    print("GTK GUI smoke test passed: window, FileDialog, and VTE child spawn all work")
 
 
 if __name__ == "__main__":
