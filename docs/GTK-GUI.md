@@ -1,6 +1,6 @@
 # GTK4 front end
 
-`gui/targetsim_gui.py` is a native Ubuntu GTK4 front end for the target-system emulator. It embeds a VTE terminal, so the CP/M console remains a real pseudo-terminal instead of being simulated by GUI text controls.
+`gui/app.py` is a native Ubuntu GTK4 front end for the target-system emulator. It embeds a VTE terminal, so the CP/M console remains a real pseudo-terminal instead of being simulated by GUI text controls.
 
 ## Ubuntu dependencies
 
@@ -77,7 +77,7 @@ The monitor's current low-two-bit console convention is:
 - one-click full-geometry work-copy creation
 - IDE command trace
 
-A CF work copy uses the same `tools/make_cf_workcopy.py` helper used by the command-line lab, preserving compact/archive source images and expanding the working image to the 8 MiB logical geometry.
+A CF work copy uses the same `tools/make_cf_workcopy.py` helper used by the command-line lab, preserving compact/archive source images and expanding the working image to the 8 MiB logical geometry. GUI-created work copies always receive a new filename and never overwrite an existing work image.
 
 ### Digital Systems FDC-1
 
@@ -88,7 +88,7 @@ A CF work copy uses the same `tools/make_cf_workcopy.py` helper used by the comm
 - DSI writes
 - DSI command trace
 
-The GUI recognizes the FDC-1 single-density geometry as exactly 256,256 bytes (`77 x 26 x 128`). DSI writes remain off by default. Prefer selecting an archival image, clicking **Work Copy**, and only then enabling **Allow DSI writes**.
+The GUI recognizes the FDC-1 single-density geometry as exactly 256,256 bytes (`77 x 26 x 128`). DSI writes remain off by default. Prefer selecting an archival image, clicking **Work Copy**, and only then enabling **Allow DSI writes**. GUI-created DSI work copies never overwrite an existing work image.
 
 ## Session controls
 
