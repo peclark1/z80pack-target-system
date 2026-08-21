@@ -99,7 +99,7 @@ def _parse_ihex(text: str) -> dict[int, int]:
     return memory
 
 
-def _validate_ihex(text: str) -> None:
+def _validated_ihex_memory(text: str) -> dict[int, int]:
     memory = _parse_ihex(text)
     expected = set(range(ROM_ORIGIN, ROM_END))
     actual = set(memory)
@@ -110,6 +110,7 @@ def _validate_ihex(text: str) -> None:
             f"Intel HEX must contain exactly F000H-FFFFH ({ROM_SIZE} bytes); "
             f"missing={missing}, outside={outside}"
         )
+    return memory
 
 
 def inspect_rom(path: str | Path) -> RomInfo:
@@ -126,7 +127,7 @@ def inspect_rom(path: str | Path) -> RomInfo:
         raise ValueError(
             f"ROM must be a {ROM_SIZE}-byte binary or Intel HEX covering F000H-FFFFH"
         ) from exc
-    _validate_ihex(text)
+    _validated_ihex_memory(text)
     return RomInfo(source, "Intel HEX", digest)
 
 
@@ -138,9 +139,13 @@ def stage_rom(source: str | Path, destination_dir: str | Path) -> Path:
 
     data = source_path.read_bytes()
     if info.format == "binary":
-        destination.write_text(binary_to_ihex(data), encoding="ascii")
+        image = data
     else:
-        # The source has already been checksum/address validated. Normalize only
-        # the trailing newline and leave its record structure otherwise intact.
-        destination.write_text(data.decode("ascii").rstrip() + "\n", encoding="ascii")
+        # Normalize any valid Intel HEX flavor into the simple 16-bit record
+        # layout already proven with z80pack's loader. This also strips optional
+        # start-address metadata and extended-address records.
+        memory = _validated_ihex_memory(data.decode("ascii"))
+        image = bytes(memory[address] for address in range(ROM_ORIGIN, ROM_END))
+
+    destination.write_text(binary_to_ihex(image), encoding="ascii")
     return destination
