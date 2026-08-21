@@ -17,6 +17,7 @@ DSI_TRACE ?= 0
 DSI_WRITE ?= 0
 DSI_BOOTSTRAP ?= 0
 FP_PORT ?= 00
+FP_FILE ?=
 CPU_MHZ ?= 4
 SMOKE_CF := build/smoke-cf0.img
 SMOKE_DSI := build/smoke-dsi.img
@@ -44,6 +45,7 @@ help:
 	  'make build                         Incrementally build targetsim' \
 	  'make run                           Restart existing lab work images immediately' \
 	  'make run CPU_MHZ=4 FP_PORT=00      Set CPU speed and IMSAI FFH input byte' \
+	  'make run FP_FILE=/path/value.txt   Read live IMSAI FFH value from a hex-byte file' \
 	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
 	  'make run DSI0=/path/sd.img         Attach DSI FDC-1 SD drive A read-only' \
 	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
@@ -112,6 +114,7 @@ run:
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
 	TARGET_FP_PORT="$(FP_PORT)" \
+	TARGET_FP_FILE="$(FP_FILE)" \
 	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(abspath build)"'
 
 dsi-compat: build
@@ -124,6 +127,7 @@ dsi-compat: build
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP=1 \
 	TARGET_FP_PORT="$(FP_PORT)" \
+	TARGET_FP_FILE="$(FP_FILE)" \
 	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/dsi-compat.conf'
 
 cf-work:
@@ -151,7 +155,7 @@ cf-reset:
 	@echo 'disposable CF work copies removed; reference images were not touched'
 
 lab: build current-rom cf-work
-	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" CPU_MHZ="$(CPU_MHZ)"
+	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" FP_FILE="$(FP_FILE)" CPU_MHZ="$(CPU_MHZ)"
 
 gui:
 	$(PYTHON) gui/app.py
