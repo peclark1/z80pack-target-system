@@ -6,9 +6,11 @@ The goal is not to create a generic CP/M machine. The goal is to run the **same 
 
 ## Current verified status
 
-The emulator now boots the **actual target CP/M 3 images** through the actual current 4K monitor ROM and emulated Dual IDE/CF V3 interface.
+The emulator boots the **actual target CP/M 3 images** through the actual current 4K monitor ROM and emulated Dual IDE/CF V3 interface. It also includes a software-visible Digital Systems FDC-1 single-density controller model and a separate full-64K compatibility profile for historical DSI systems.
 
-The automated CI smoke test still verifies the complete low-level boot path:
+The automated CI smoke tests verify both storage paths.
+
+### Target ROM / IDE path
 
 1. build the target monitor with PASMO;
 2. verify the logical 4K image;
@@ -21,7 +23,18 @@ The automated CI smoke test still verifies the complete low-level boot path:
 9. transfer CPMLDR through the emulated 8255/ATA data path to `0100H`;
 10. validate and execute the loader.
 
-The generated machine reports exactly the current target's CPU-visible memory profile: 60K RAM at `0000H-EFFFH`, 4K ROM at `F000H-FFFFH`, POJ/reset at `F000H`, and no additional MMU RAM banks exposed.
+### DSI FDC-1 path
+
+1. create a 256,256-byte 77x26x128 single-density test image;
+2. perform the documented FDC bootstrap from track 0 sector 1 into `0000H-007FH`;
+3. select DSI drive 0 through `7FH`;
+4. program DMA address `0100H` through `7EH/7DH`;
+5. issue a direct FDC-1 read command through `7FH`;
+6. DMA track 0 sector 2 through the authentic 131-byte request buffer;
+7. poll FDC-1 I/O-finish status;
+8. print `DSI FDC1 OK` through Console I/O.
+
+The generated target machine reports exactly the current target's CPU-visible memory profile: 60K RAM at `0000H-EFFFH`, 4K ROM at `F000H-FFFFH`, POJ/reset at `F000H`, and no additional MMU RAM banks exposed.
 
 Real-image validation currently includes:
 
@@ -49,9 +62,10 @@ The v3.1 image therefore recovers **9K of TPA** versus the v3.0 control while re
 - S100Computers Console I/O V2 at `00H-01H`
 - S100Computers Dual IDE/CF V3 at `30H-34H`
 - IMSAI MIO SIO at `42H-43H`
+- Digital Systems FDC-1 single-density interface at `7DH-7FH`
 - S100Computers Serial I/O V3 channel A at `A1H/A3H`
 - IMSAI programmed-input / sense switches at `FFH`
-- Altair-compatible FDC interface for floppy boot support
+- Altair-compatible FDC/FDC+ floppy interface planned for separate floppy support
 
 The emulator must conform to the real hardware interface. We do not plan to change ROM or BIOS code merely to make emulation easier.
 
@@ -69,6 +83,8 @@ The first major use case is a CP/M 3 development laboratory. The working loop is
 
 This makes experiments such as changing `MEMTOP`, buffer placement, allocation vectors, directory hashing, BIOS placement, and driver size much safer and faster than repeated tests on physical media.
 
+The DSI model adds a second use case: historical single-density CP/M images can be exercised against the authentic FDC-1 port/DMA protocol, while a separate 64K compatibility profile distinguishes controller problems from memory-layout conflicts with the target's `F000H-FFFFH` monitor ROM.
+
 ## Repository layout
 
 ```text
@@ -79,7 +95,7 @@ This makes experiments such as changing `MEMTOP`, buffer placement, allocation v
 ├── cpm3/                 CP/M 3 source/config/build workspace
 ├── disks/                Disk-image integration notes; images stay untracked
 ├── scripts/              Bootstrap/build helpers
-├── tools/                Host-side utilities, including CF work-copy creation
+├── tools/                Host-side utilities and regression image generators
 ├── tests/                Host-side regression tests
 └── Makefile
 ```
@@ -129,11 +145,19 @@ The initial upstream baseline is commit:
 ### M4 - Additional target I/O
 
 - MIO SIO subset at `42H/43H` — initial serial mapping implemented
+- Digital Systems FDC-1 SD path at `7DH-7FH` — implemented and regression tested
+  - 77x26x128 flat SD media
+  - drive select and stepping
+  - status polling
+  - normal 131-byte DMA reads/writes
+  - hardware/software bootstrap behavior
+  - read-only-by-default archival image handling
+  - separate 64K DSI compatibility profile
 - Serial I/O V3 channel A at `A1H/A3H`
 - front-panel console-selection regression tests
 - Altair FDC/FDC+ compatible floppy path
 
-Later additions can include the DSI disk subsystem, VTI, interrupt fidelity, and more detailed timing when software requires them.
+Later additions can include VTI, interrupt fidelity, more detailed disk timing, and other cards when software requires them.
 
 ## Getting started
 
@@ -157,7 +181,7 @@ To convert the logical 4K monitor `.bin` produced by `s100-target-system-4k-mast
 make rom ROM_BIN=/path/to/IMSAI_TARGET_MONITOR_4K.bin
 ```
 
-Or build the pinned current monitor source automatically and run the complete IDE boot smoke test:
+Or build the pinned current monitor source automatically and run both complete storage smoke tests:
 
 ```sh
 make smoke
@@ -203,6 +227,28 @@ make run CF0=/path/to/cf0.img CF1=/path/to/cf1.img
 ```
 
 ATA command tracing can be enabled with `IDE_TRACE=1`.
+
+### Run a DSI single-density image
+
+Attach a 256,256-byte 77x26x128 image while retaining the real target memory map and monitor ROM:
+
+```sh
+make run DSI0=/path/to/dsi-sd.img DSI_BOOTSTRAP=1
+```
+
+For a historical CP/M image that expects all 64K to be RAM, use the isolated compatibility profile instead:
+
+```sh
+make dsi-compat DSI0=/path/to/dsi-sd.img
+```
+
+DSI images are read-only by default. Use `DSI_WRITE=1` only with a disposable scratch copy. Enable tracing with `DSI_TRACE=1`.
+
+See `docs/DSI-FDC1.md` for the exact controller interface and compatibility-profile details.
+
+### Clean interactive exit
+
+During an interactive targetsim session, press **Ctrl-]** to leave the emulator through z80pack's normal terminal-cleanup path. Ctrl-C remains available to CP/M and guest applications.
 
 Run host-side tests with:
 
