@@ -11,18 +11,27 @@ CF1 ?= $(CF1_WORK)
 CF0_SOURCE ?=
 CF1_SOURCE ?=
 IDE_TRACE ?= 0
+DSI0 ?=
+DSI1 ?=
+DSI_TRACE ?= 0
+DSI_WRITE ?= 0
+DSI_BOOTSTRAP ?= 0
 SMOKE_CF := build/smoke-cf0.img
+SMOKE_DSI := build/smoke-dsi.img
 
 TARGET_INPUTS := \
 	Makefile \
 	scripts/bootstrap-z80pack.sh \
 	scripts/prepare-targetsim.sh \
 	emulator/conf/system.conf \
+	emulator/conf/dsi-compat.conf \
 	emulator/srcsim/simio.c \
 	emulator/srcsim/target-ide.c \
-	emulator/srcsim/target-ide.h
+	emulator/srcsim/target-ide.h \
+	emulator/srcsim/target-dsi-fdc1.c \
+	emulator/srcsim/target-dsi-fdc1.h
 
-.PHONY: help bootstrap prepare rom current-rom build run cf-work cf-reset lab smoke-cf smoke test clean
+.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-dsi smoke test clean
 
 help:
 	@printf '%s\n' \
@@ -33,14 +42,22 @@ help:
 	  'make build                         Incrementally build targetsim' \
 	  'make run                           Restart existing lab work images immediately' \
 	  'make run IDE_TRACE=1               Restart with IDE command tracing enabled' \
+	  'make run DSI0=/path/sd.img         Attach DSI FDC-1 SD drive A read-only' \
+	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
+	  '                                   Preload T0/S1 into 0000H-007FH while retaining target ROM/map' \
+	  'make dsi-compat DSI0=/path/sd.img Run historical DSI image with 64K RAM/no target ROM' \
+	  'make run DSI0=/path/a.img DSI1=/path/b.img DSI_TRACE=1' \
+	  '                                   Attach/trace two DSI SD drives' \
 	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
 	  '                                   Create work copies only if they do not exist' \
 	  'make cf-reset                      Delete disposable lab work copies' \
 	  'make lab CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
 	  '                                   First setup/build, then run the CP/M 3 lab' \
-	  'make smoke                         Real-ROM IDE boot regression' \
+	  'make smoke                         Run IDE/ROM and DSI FDC-1 boot regressions' \
 	  'make test                          Run host-side regression tests' \
-	  'make clean                         Remove all generated build output/work images'
+	  'make clean                         Remove all generated build output/work images' \
+	  '' \
+	  'Interactive targetsim sessions: press Ctrl-] for a clean emulator exit.'
 
 bootstrap:
 	bash scripts/bootstrap-z80pack.sh
@@ -78,14 +95,27 @@ run:
 		echo 'error: build/target-monitor.hex is missing; run make lab or make current-rom first' >&2; \
 		exit 2; \
 	fi
-	@if [ ! -f "$(CF0)" ]; then \
-		echo 'error: CF0 image not found: $(CF0)' >&2; \
-		echo '       run make lab CF0_SOURCE=/path/to/reference.img first' >&2; \
+	@if [ ! -f "$(CF0)" ] && { [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; }; then \
+		echo 'error: neither a CF0 image nor a DSI0 image is available' >&2; \
+		echo '       run make lab CF0_SOURCE=/path/to/reference.img or set DSI0=/path/to/sd.img' >&2; \
 		exit 2; \
 	fi
-	TARGET_CF0="$(abspath $(CF0))" \
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
-	sh -c 'if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+	TARGET_DSI_TRACE="$(DSI_TRACE)" \
+	TARGET_DSI_WRITE="$(DSI_WRITE)" \
+	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
+	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/system.conf -r "$(abspath build)"'
+
+dsi-compat: build
+	@if [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; then \
+		echo 'error: set DSI0 to a 256256-byte 77x26x128 single-density image' >&2; \
+		exit 2; \
+	fi
+	TARGET_DSI0="$(abspath $(DSI0))" \
+	TARGET_DSI_TRACE="$(DSI_TRACE)" \
+	TARGET_DSI_WRITE="$(DSI_WRITE)" \
+	TARGET_DSI_BOOTSTRAP=1 \
+	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -c conf_3d/dsi-compat.conf'
 
 cf-work:
 	@if [ -z "$(CF0_SOURCE)" ]; then \
@@ -112,17 +142,28 @@ cf-reset:
 	@echo 'disposable CF work copies removed; reference images were not touched'
 
 lab: build current-rom cf-work
-	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)"
+	$(MAKE) run CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)"
 
 smoke-cf:
 	$(PYTHON) tools/make_smoke_cf.py "$(SMOKE_CF)"
 
-smoke: build current-rom smoke-cf
+smoke-dsi-image:
+	$(PYTHON) tools/make_dsi_smoke.py "$(SMOKE_DSI)"
+
+smoke-ide: build current-rom smoke-cf
 	$(PYTHON) tools/run_boot_smoke.py \
 		--targetsim "$(TARGET_BIN)" \
 		--config "$(TARGET_DIR)/conf_3d/system.conf" \
 		--romdir "$(abspath build)" \
 		--cf0 "$(SMOKE_CF)"
+
+smoke-dsi: build smoke-dsi-image
+	$(PYTHON) tools/run_dsi_smoke.py \
+		--targetsim "$(TARGET_BIN)" \
+		--config "$(TARGET_DIR)/conf_3d/dsi-compat.conf" \
+		--disk "$(SMOKE_DSI)"
+
+smoke: smoke-ide smoke-dsi
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
