@@ -56,8 +56,6 @@
 #define STAT_TRACK_ZERO         0x04
 #define STAT_IO_FINISH          0x08
 #define STAT_TRACK_ERROR        0x10
-#define STAT_ID_CRC_ERROR       0x20
-#define STAT_DATA_CRC_ERROR     0x40
 #define STAT_HEAD_UNLOADED      0x80
 
 struct dsi_drive {
@@ -78,6 +76,14 @@ static int io_finished;
 static int head_unloaded;
 static int file_inoperative;
 static int trace_enabled;
+static int write_enabled;
+
+static int env_enabled(const char *name)
+{
+    const char *value = getenv(name);
+
+    return value != NULL && *value != '\0' && strcmp(value, "0") != 0;
+}
 
 static uint64_t file_size(FILE *fp)
 {
@@ -117,10 +123,18 @@ static void open_drive(int number)
         return;
 
     snprintf(drive->path, sizeof(drive->path), "%s", path);
-    drive->fp = fopen(path, "r+b");
-    if (drive->fp != NULL) {
-        drive->writable = 1;
-    } else {
+
+    /*
+     * Archival floppy images are precious.  Mount read-only unless the user
+     * explicitly opts into writes with TARGET_DSI_WRITE=1.
+     */
+    if (write_enabled) {
+        drive->fp = fopen(path, "r+b");
+        if (drive->fp != NULL)
+            drive->writable = 1;
+    }
+
+    if (drive->fp == NULL) {
         drive->fp = fopen(path, "rb");
         drive->writable = 0;
     }
@@ -149,7 +163,7 @@ static void open_drive(int number)
                 "target-dsi: DSI%d %s, %llu bytes%s\n",
                 number, drive->path,
                 (unsigned long long) drive->size,
-                drive->writable ? "" : " (read-only)");
+                drive->writable ? " (writable)" : " (read-only)");
     }
 }
 
@@ -204,8 +218,7 @@ static void fail_sector(void)
     /*
      * The FDC-1 manual describes an impossible sector request as searching
      * until the head unloads, with IO FINISH remaining clear.  This status
-     * lets authentic BIOS code escape its 88h (head-unload/IOF) wait loop
-     * and then report the high-bit error condition.
+     * lets authentic BIOS code escape its 88h (head-unload/IOF) wait loop.
      */
     head_unloaded = 1;
     io_finished = 0;
@@ -405,7 +418,7 @@ void target_dsi_fdc1_command_out(BYTE data)
             fprintf(stderr, "target-dsi: selected drive %d\n", selected_drive);
     }
 
-    /* CBIOS14 pulses STEP low -> high -> low; move on the rising edge. */
+    /* CBIOS14 pulses STEP 0 -> 1 -> 0; move on the rising edge. */
     if ((data & CMD_STEP) && !(previous_command & CMD_STEP)) {
         io_finished = 0;
         step_selected_drive(data);
@@ -434,10 +447,10 @@ void target_dsi_fdc1_reset(void)
 
 void target_dsi_fdc1_init(void)
 {
-    const char *trace = getenv("TARGET_DSI_TRACE");
     int i;
 
-    trace_enabled = trace != NULL && *trace != '\0' && strcmp(trace, "0") != 0;
+    trace_enabled = env_enabled("TARGET_DSI_TRACE");
+    write_enabled = env_enabled("TARGET_DSI_WRITE");
 
     for (i = 0; i < DSI_DRIVES; i++)
         open_drive(i);
