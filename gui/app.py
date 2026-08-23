@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import core_app as _core
+from image_info import IBM3740_SIZE
 from rom_image import inspect_rom
 from window_state import WindowState, load_window_state, save_window_state
 
@@ -138,17 +139,18 @@ class RomRow(_core.Gtk.Frame):
 
 
 class TargetSimWindow(_BaseTargetSimWindow):
-    """Core GUI window with ROM selection and persistent window state."""
+    """Core GUI window with ROM/FDC+ selection and persistent window state."""
 
     def __init__(self, *args, **kwargs):
         state = load_window_state()
         super().__init__(*args, **kwargs)
 
-        self.rom_row = RomRow(self._controls_changed)
-        self.rom_row.set_path(self.config.rom_image)
         settings = _find_settings_box(self)
         if not isinstance(settings, _core.Gtk.Box):
-            raise RuntimeError("unable to attach 4K ROM selector to the GUI settings panel")
+            raise RuntimeError("unable to attach extended controls to the GUI settings panel")
+
+        self.rom_row = RomRow(self._controls_changed)
+        self.rom_row.set_path(self.config.rom_image)
 
         previous = None
         child = settings.get_first_child()
@@ -158,6 +160,47 @@ class TargetSimWindow(_BaseTargetSimWindow):
             previous = child
             child = child.get_next_sibling()
         settings.insert_child_after(self.rom_row, previous)
+
+        # The FDC+ backend supports four Type 8 units. Keep these controls
+        # separate from DSI even though both use 256,256-byte IBM-3740 images.
+        settings.append(_core.Gtk.Separator())
+        settings.append(self._section_label("Altair FDC+ — Type 8 / iCOM 3712"))
+
+        self.fdcplus_rows = []
+        for number in range(4):
+            row = _core.ImageRow(
+                f"FDC+ Drive {number}",
+                self._controls_changed,
+                lambda source, unit=number: self._fdcplus_work_copy(source, unit),
+            )
+            row.set_path(getattr(self.config, f"fdcplus{number}", ""))
+            setattr(self, f"fdcplus{number}", row)
+            self.fdcplus_rows.append(row)
+            settings.append(row)
+
+        self.fdcplus_write = _core.Gtk.CheckButton(label="Allow FDC+ writes")
+        self.fdcplus_write.set_active(getattr(self.config, "fdcplus_write", False))
+        self.fdcplus_write.set_tooltip_text(
+            "Off by default to protect disk images. Prefer Work Copy before enabling writes."
+        )
+        self.fdcplus_write.connect("toggled", self._controls_changed)
+        settings.append(self.fdcplus_write)
+
+        safety = _core.Gtk.Label(
+            label=(
+                "FDC+ Type 8 media are attached read-only unless “Allow FDC+ writes” "
+                "is enabled. Work Copy creates a disposable IBM-3740 image under build/."
+            ),
+            xalign=0,
+        )
+        safety.set_wrap(True)
+        safety.add_css_class("dim-label")
+        settings.append(safety)
+
+        self.fdcplus_trace = _core.Gtk.CheckButton(label="FDC+ command trace")
+        self.fdcplus_trace.set_active(getattr(self.config, "fdcplus_trace", False))
+        self.fdcplus_trace.connect("toggled", self._controls_changed)
+        settings.append(self.fdcplus_trace)
 
         # GTK recommends get/set_default_size() for persistent window sizing;
         # it retains the normal (unmaximized) dimensions as the user resizes.
@@ -171,6 +214,16 @@ class TargetSimWindow(_BaseTargetSimWindow):
         self._profile_changed()
         self._controls_changed()
 
+    @staticmethod
+    def _fdcplus_work_copy(source: Path, number: int) -> Path:
+        if source.stat().st_size != IBM3740_SIZE:
+            raise ValueError(
+                "FDC+ Type 8 work copies require a 256,256-byte IBM-3740 77x26x128 image"
+            )
+        destination = _core.next_work_path(f"fdcplus{number}-gui")
+        _core.shutil.copy2(source, destination)
+        return destination
+
     def _current_config(self):
         config = super()._current_config()
         if hasattr(self, "rom_row"):
@@ -178,12 +231,30 @@ class TargetSimWindow(_BaseTargetSimWindow):
         else:
             # Base __init__ calls _current_config before our ROM row exists.
             config.rom_image = getattr(self.config, "rom_image", "")
+
+        for number in range(4):
+            name = f"fdcplus{number}"
+            row = getattr(self, name, None)
+            setattr(config, name, row.get_path() if row is not None else getattr(self.config, name, ""))
+
+        if hasattr(self, "fdcplus_trace"):
+            config.fdcplus_trace = self.fdcplus_trace.get_active()
+            config.fdcplus_write = self.fdcplus_write.get_active()
+        else:
+            config.fdcplus_trace = getattr(self.config, "fdcplus_trace", False)
+            config.fdcplus_write = getattr(self.config, "fdcplus_write", False)
         return config
 
     def _profile_changed(self, *args):
         result = super()._profile_changed(*args)
+        target_mode = self.profile.get_selected() == 0
         if hasattr(self, "rom_row"):
-            self.rom_row.set_sensitive(self.profile.get_selected() == 0)
+            self.rom_row.set_sensitive(target_mode)
+        if hasattr(self, "fdcplus_rows"):
+            for row in self.fdcplus_rows:
+                row.set_sensitive(target_mode)
+            self.fdcplus_write.set_sensitive(target_mode)
+            self.fdcplus_trace.set_sensitive(target_mode)
         return result
 
     def _capture_window_state(self) -> WindowState:

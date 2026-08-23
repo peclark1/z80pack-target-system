@@ -52,6 +52,20 @@ jobs:
           sudo apt-get install -y build-essential git libx11-dev pasmo
       - name: Build targetsim and boot real target ROM through IDE
         run: make smoke
+      - name: Exercise FDC+ Drive Type 8 FD3712 protocol
+        run: |
+          python3 tools/make_fdcplus_smoke.py \
+            --disk build/smoke-fdcplus.dsk \
+            --rom build/smoke-fdcplus-rom.bin
+          rm -rf build/smoke-fdcplus-rom
+          python3 tools/prepare_run_rom.py \
+            build/smoke-fdcplus-rom.bin \
+            build/smoke-fdcplus-rom
+          python3 tools/run_fdcplus_smoke.py \
+            --targetsim build/z80pack-upstream/targets100sim/targetsim \
+            --config build/z80pack-upstream/targets100sim/conf_3d/system.conf \
+            --romdir build/smoke-fdcplus-rom \
+            --disk build/smoke-fdcplus.dsk
       - name: Stage runnable headless emulator
         run: |
           mkdir -p artifact

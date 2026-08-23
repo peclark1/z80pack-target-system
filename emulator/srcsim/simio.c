@@ -22,6 +22,7 @@
 #include "unix_network.h"
 #include "target-ide.h"
 #include "target-dsi-fdc1.h"
+#include "target-fdcplus-type8.h"
 
 /* The upstream IMSAI HAL expects the machine layer to supply the connector
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
@@ -146,6 +147,11 @@ in_func_t *const port_in[256] = {
     [0x00] = console_io_status_in,
     [0x01] = console_io_data_in,
 
+    /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
+    [0x08] = target_fdcplus_type8_status_data_in,
+    [0x0a] = target_fdcplus_type8_port0a_in,
+    [0x0b] = target_fdcplus_type8_port0b_in,
+
     /* S100Computers Dual IDE/CF V3 */
     [0x30] = target_ide_a_in,
     [0x31] = target_ide_b_in,
@@ -166,6 +172,12 @@ in_func_t *const port_in[256] = {
 
 out_func_t *const port_out[256] = {
     [0x01] = imsai_sio1a_data_out,
+
+    /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
+    [0x08] = target_fdcplus_type8_command_out,
+    [0x09] = target_fdcplus_type8_data_out,
+    [0x0a] = target_fdcplus_type8_port0a_out,
+    [0x0b] = target_fdcplus_type8_port0b_out,
 
     /* S100Computers Dual IDE/CF V3 */
     [0x30] = target_ide_a_out,
@@ -192,6 +204,7 @@ void init_io(void)
     hal_reset();
     target_ide_init();
     target_dsi_fdc1_init();
+    target_fdcplus_type8_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -202,12 +215,14 @@ void reset_io(void)
     imsai_sio_reset();
     target_ide_reset();
     target_dsi_fdc1_reset();
+    target_fdcplus_type8_reset();
 }
 
 void exit_io(void)
 {
     int i;
 
+    target_fdcplus_type8_exit();
     target_dsi_fdc1_exit();
     target_ide_exit();
 

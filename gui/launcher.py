@@ -20,6 +20,11 @@ try:
 except ImportError:
     from .rom_image import inspect_rom
 
+try:
+    from image_info import IBM3740_SIZE
+except ImportError:
+    from .image_info import IBM3740_SIZE
+
 # app.py imports this module after loading VTE.  Normalize Ubuntu 24.04's
 # byte-array feed_child() binding so the GUI can send Ctrl-] as a Python str.
 install_feed_child_string_compat()
@@ -36,10 +41,16 @@ class LaunchConfig:
     cf1: str = ""
     dsi0: str = ""
     dsi1: str = ""
+    fdcplus0: str = ""
+    fdcplus1: str = ""
+    fdcplus2: str = ""
+    fdcplus3: str = ""
     ide_trace: bool = False
     dsi_trace: bool = False
     dsi_write: bool = False
     dsi_bootstrap: bool = False
+    fdcplus_trace: bool = False
+    fdcplus_write: bool = False
     fp_port: str = "00"
     cpu_mhz: int = 4
 
@@ -59,26 +70,42 @@ class LaunchConfig:
         if not 1 <= int(self.cpu_mhz) <= 100:
             errors.append("CPU speed must be between 1 and 100 MHz")
 
-        for label, value in (
-            ("CF0", self.cf0),
-            ("CF1", self.cf1),
-            ("DSI0", self.dsi0),
-            ("DSI1", self.dsi1),
-        ):
+        # DSI images can be used by either profile, so always validate selected
+        # DSI paths. CF and FDC+ devices are target-profile devices only.
+        for label, value in (("DSI0", self.dsi0), ("DSI1", self.dsi1)):
             if value and not Path(value).expanduser().is_file():
                 errors.append(f"{label} image not found: {value}")
 
-        if self.profile == PROFILE_TARGET and self.rom_image:
-            try:
-                inspect_rom(self.rom_image)
-            except (OSError, ValueError) as exc:
-                errors.append(f"ROM image is not a valid 4K F000H image: {exc}")
+        if self.profile == PROFILE_TARGET:
+            for label, value in (("CF0", self.cf0), ("CF1", self.cf1)):
+                if value and not Path(value).expanduser().is_file():
+                    errors.append(f"{label} image not found: {value}")
+
+            for number, value in enumerate(
+                (self.fdcplus0, self.fdcplus1, self.fdcplus2, self.fdcplus3)
+            ):
+                if not value:
+                    continue
+                path = Path(value).expanduser()
+                if not path.is_file():
+                    errors.append(f"FDCPLUS{number} image not found: {value}")
+                    continue
+                if path.stat().st_size != IBM3740_SIZE:
+                    errors.append(
+                        f"FDCPLUS{number} must be a 256,256-byte IBM-3740 77x26x128 image"
+                    )
+
+            if self.rom_image:
+                try:
+                    inspect_rom(self.rom_image)
+                except (OSError, ValueError) as exc:
+                    errors.append(f"ROM image is not a valid 4K F000H image: {exc}")
 
         if self.profile == PROFILE_DSI_COMPAT and not self.dsi0:
             errors.append("DSI compatibility mode requires a DSI0 image")
 
-        if self.profile == PROFILE_TARGET and not self.cf0 and not self.dsi0:
-            errors.append("target mode requires at least CF0 or DSI0")
+        if self.profile == PROFILE_TARGET and not self.cf0 and not self.dsi0 and not self.fdcplus0:
+            errors.append("target mode requires at least CF0, DSI0, or FDCPLUS0")
 
         return errors
 
@@ -94,13 +121,17 @@ class LaunchConfig:
 
         if self.profile == PROFILE_TARGET:
             # Explicit empty values suppress Makefile defaults when the user
-            # intentionally wants a DSI-only target session. An empty
-            # ROM_IMAGE means use the pinned/current build/target-monitor.hex.
+            # intentionally wants a non-IDE target session. An empty ROM_IMAGE
+            # means use the pinned/current build/target-monitor.hex.
             argv.extend(
                 [
                     f"ROM_IMAGE={self.rom_image}",
                     f"CF0={self.cf0}",
                     f"CF1={self.cf1}",
+                    f"FDCPLUS0={self.fdcplus0}",
+                    f"FDCPLUS1={self.fdcplus1}",
+                    f"FDCPLUS2={self.fdcplus2}",
+                    f"FDCPLUS3={self.fdcplus3}",
                 ]
             )
 
@@ -112,6 +143,8 @@ class LaunchConfig:
                 f"DSI_TRACE={int(self.dsi_trace)}",
                 f"DSI_WRITE={int(self.dsi_write)}",
                 f"DSI_BOOTSTRAP={int(self.dsi_bootstrap)}",
+                f"FDCPLUS_TRACE={int(self.fdcplus_trace)}",
+                f"FDCPLUS_WRITE={int(self.fdcplus_write)}",
                 f"FP_PORT={self.fp_port.upper()}",
                 f"CPU_MHZ={int(self.cpu_mhz)}",
             ]
@@ -124,8 +157,9 @@ class LaunchConfig:
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         # Never persist write authorization. Each application launch must
-        # explicitly opt in again before an archival DSI image can be changed.
+        # explicitly opt in again before an archival disk image can be changed.
         value["dsi_write"] = False
+        value["fdcplus_write"] = False
         return value
 
     @classmethod
@@ -133,6 +167,7 @@ class LaunchConfig:
         fields = cls.__dataclass_fields__
         config = cls(**{k: v for k, v in value.items() if k in fields})
         config.dsi_write = False
+        config.fdcplus_write = False
         return config
 
 

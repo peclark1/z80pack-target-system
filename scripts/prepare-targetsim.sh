@@ -13,7 +13,7 @@ cp -a "$UPSTREAM/imsaisim" "$TARGET"
 # Give the generated machine its own binary/name while continuing to reuse the
 # mature IMSAI memory/config/control implementation from the pinned upstream.
 sed -i 's/^MACHINE = imsai$/MACHINE = target/' "$TARGET/srcsim/Makefile"
-sed -i 's/^MACHINE_SRCS = simcfg.c simio.c simmem.c simctl.c$/MACHINE_SRCS = simcfg.c simio.c simmem.c simctl.c target-ide.c target-dsi-fdc1.c/' "$TARGET/srcsim/Makefile"
+sed -i 's/^MACHINE_SRCS = simcfg.c simio.c simmem.c simctl.c$/MACHINE_SRCS = simcfg.c simio.c simmem.c simctl.c target-ide.c target-dsi-fdc1.c target-fdcplus-type8.c/' "$TARGET/srcsim/Makefile"
 sed -i 's/^#define DEF_CPU I8080/#define DEF_CPU Z80/' "$TARGET/srcsim/sim.h"
 sed -i 's/^#define CPU_SPEED 2/#define CPU_SPEED 4/' "$TARGET/srcsim/sim.h"
 sed -i 's/^#define MACHINE "imsai"/#define MACHINE "target"/' "$TARGET/srcsim/sim.h"
@@ -32,6 +32,8 @@ cp "$ROOT/emulator/srcsim/target-ide.c" "$TARGET/srcsim/target-ide.c"
 cp "$ROOT/emulator/srcsim/target-ide.h" "$TARGET/srcsim/target-ide.h"
 cp "$ROOT/emulator/srcsim/target-dsi-fdc1.c" "$TARGET/srcsim/target-dsi-fdc1.c"
 cp "$ROOT/emulator/srcsim/target-dsi-fdc1.h" "$TARGET/srcsim/target-dsi-fdc1.h"
+cp "$ROOT/emulator/srcsim/target-fdcplus-type8.c" "$TARGET/srcsim/target-fdcplus-type8.c"
+cp "$ROOT/emulator/srcsim/target-fdcplus-type8.h" "$TARGET/srcsim/target-fdcplus-type8.h"
 
 # Keep target and historical DSI compatibility configs with the generated
 # machine for convenient manual launches.

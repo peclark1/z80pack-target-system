@@ -18,6 +18,12 @@ DSI1 ?=
 DSI_TRACE ?= 0
 DSI_WRITE ?= 0
 DSI_BOOTSTRAP ?= 0
+FDCPLUS0 ?=
+FDCPLUS1 ?=
+FDCPLUS2 ?=
+FDCPLUS3 ?=
+FDCPLUS_TRACE ?= 0
+FDCPLUS_WRITE ?= 0
 FP_PORT ?= 00
 FP_FILE ?=
 CPU_MHZ ?= 4
@@ -35,7 +41,9 @@ TARGET_INPUTS := \
 	emulator/srcsim/target-ide.c \
 	emulator/srcsim/target-ide.h \
 	emulator/srcsim/target-dsi-fdc1.c \
-	emulator/srcsim/target-dsi-fdc1.h
+	emulator/srcsim/target-dsi-fdc1.h \
+	emulator/srcsim/target-fdcplus-type8.c \
+	emulator/srcsim/target-fdcplus-type8.h
 
 .PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-selected-rom smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
 
@@ -58,6 +66,11 @@ help:
 	  'make dsi-compat DSI0=/path/sd.img Run historical DSI image with 64K RAM/no target ROM' \
 	  'make run DSI0=/path/a.img DSI1=/path/b.img DSI_TRACE=1' \
 	  '                                   Attach/trace two DSI SD drives' \
+	  'make run FDCPLUS0=/path/ibm3740.dsk FDCPLUS_TRACE=1' \
+	  '                                   Attach/trace FDC+ Drive Type 8 (FD3712) drive 0' \
+	  '                                   Type 8 images are 77x26x128 IBM-3740 (256256 bytes)' \
+	  'make run FDCPLUS0=/path/disk.dsk FDCPLUS_WRITE=1' \
+	  '                                   Explicitly allow writes to the Type 8 image' \
 	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
 	  '                                   Create work copies only if they do not exist' \
 	  'make cf-reset                      Delete disposable lab work copies' \
@@ -111,18 +124,20 @@ run:
 		echo 'error: build/target-monitor.hex is missing; run make lab or make current-rom first' >&2; \
 		exit 2; \
 	fi
-	@if [ ! -f "$(CF0)" ] && { [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; }; then \
-		echo 'error: neither a CF0 image nor a DSI0 image is available' >&2; \
-		echo '       run make lab CF0_SOURCE=/path/to/reference.img or set DSI0=/path/to/sd.img' >&2; \
+	@if [ ! -f "$(CF0)" ] && { [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; } && { [ -z "$(strip $(FDCPLUS0))" ] || [ ! -f "$(abspath $(FDCPLUS0))" ]; }; then \
+		echo 'error: no CF0, DSI0, or FDCPLUS0 image is available' >&2; \
+		echo '       run make lab CF0_SOURCE=/path/to/reference.img or set DSI0/FDCPLUS0' >&2; \
 		exit 2; \
 	fi
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
+	TARGET_FDCPLUS_TRACE="$(FDCPLUS_TRACE)" \
+	TARGET_FDCPLUS_WRITE="$(FDCPLUS_WRITE)" \
 	TARGET_FP_PORT="$(FP_PORT)" \
 	TARGET_FP_FILE="$(FP_FILE)" \
-	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(if $(strip $(ROM_IMAGE)),$(abspath $(RUN_ROM_DIR)),$(abspath build))"'
+	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; if [ -n "$(strip $(FDCPLUS0))" ] && [ -f "$(abspath $(FDCPLUS0))" ]; then export TARGET_FDCPLUS0="$(abspath $(FDCPLUS0))"; else unset TARGET_FDCPLUS0; fi; if [ -n "$(strip $(FDCPLUS1))" ] && [ -f "$(abspath $(FDCPLUS1))" ]; then export TARGET_FDCPLUS1="$(abspath $(FDCPLUS1))"; else unset TARGET_FDCPLUS1; fi; if [ -n "$(strip $(FDCPLUS2))" ] && [ -f "$(abspath $(FDCPLUS2))" ]; then export TARGET_FDCPLUS2="$(abspath $(FDCPLUS2))"; else unset TARGET_FDCPLUS2; fi; if [ -n "$(strip $(FDCPLUS3))" ] && [ -f "$(abspath $(FDCPLUS3))" ]; then export TARGET_FDCPLUS3="$(abspath $(FDCPLUS3))"; else unset TARGET_FDCPLUS3; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(if $(strip $(ROM_IMAGE)),$(abspath $(RUN_ROM_DIR)),$(abspath build))"'
 
 dsi-compat: build
 	@if [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; then \
@@ -162,7 +177,7 @@ cf-reset:
 	@echo 'disposable CF work copies removed; reference images were not touched'
 
 lab: build current-rom cf-work
-	$(MAKE) run ROM_IMAGE="$(ROM_IMAGE)" CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FP_PORT="$(FP_PORT)" FP_FILE="$(FP_FILE)" CPU_MHZ="$(CPU_MHZ)"
+	$(MAKE) run ROM_IMAGE="$(ROM_IMAGE)" CF0="$(CF0_WORK)" CF1="$(if $(strip $(CF1_SOURCE)),$(CF1_WORK),)" IDE_TRACE="$(IDE_TRACE)" DSI0="$(DSI0)" DSI1="$(DSI1)" DSI_TRACE="$(DSI_TRACE)" DSI_WRITE="$(DSI_WRITE)" DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" FDCPLUS0="$(FDCPLUS0)" FDCPLUS1="$(FDCPLUS1)" FDCPLUS2="$(FDCPLUS2)" FDCPLUS3="$(FDCPLUS3)" FDCPLUS_TRACE="$(FDCPLUS_TRACE)" FDCPLUS_WRITE="$(FDCPLUS_WRITE)" FP_PORT="$(FP_PORT)" FP_FILE="$(FP_FILE)" CPU_MHZ="$(CPU_MHZ)"
 
 gui:
 	$(PYTHON) gui/app.py
