@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from gui.image_info import IBM3740_SIZE
 from gui.launcher import (
     PROFILE_DSI_COMPAT,
     PROFILE_TARGET,
@@ -67,9 +68,19 @@ class GuiLauncherTests(unittest.TestCase):
         self.assertFalse(any(item.startswith("FDCPLUS0=") for item in argv))
 
     def test_validation_accepts_fdcplus_only_target(self):
-        with tempfile.NamedTemporaryFile() as disk:
-            cfg = LaunchConfig(profile=PROFILE_TARGET, fdcplus0=disk.name)
-            self.assertFalse(any("requires at least" in error for error in cfg.validate()))
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory) / "fdcplus.img"
+            with disk.open("wb") as handle:
+                handle.truncate(IBM3740_SIZE)
+            cfg = LaunchConfig(profile=PROFILE_TARGET, fdcplus0=str(disk))
+            self.assertEqual(cfg.validate(), [])
+
+    def test_validation_rejects_wrong_sized_fdcplus_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory) / "bad-fdcplus.img"
+            disk.write_bytes(b"not an IBM 3740 image")
+            cfg = LaunchConfig(profile=PROFILE_TARGET, fdcplus0=str(disk))
+            self.assertTrue(any("256,256-byte" in error for error in cfg.validate()))
 
     def test_validation_rejects_bad_front_panel_value(self):
         with tempfile.NamedTemporaryFile() as disk:
