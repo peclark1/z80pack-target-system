@@ -8,7 +8,9 @@ from pathlib import Path
 import hashlib
 import os
 
-DSI_SD_SIZE = 77 * 26 * 128
+IBM3740_SIZE = 77 * 26 * 128
+# Backward-compatible name used by the DSI GUI helpers/tests.
+DSI_SD_SIZE = IBM3740_SIZE
 CF_FULL_SIZE = 64 * 256 * 512
 
 
@@ -37,8 +39,10 @@ def inspect_image(path: str | Path) -> ImageInfo:
     resolved = Path(path).expanduser().resolve()
     size = resolved.stat().st_size
 
-    if size == DSI_SD_SIZE:
-        kind = "DSI FDC-1 SD 77×26×128"
+    if size == IBM3740_SIZE:
+        # A flat 77x26x128 image cannot be identified as DSI vs FDC+ from its
+        # bytes/size alone; both controllers use the IBM-3740 logical geometry.
+        kind = "IBM 3740 77×26×128 (DSI / FDC+ Type 8)"
     elif size == CF_FULL_SIZE:
         kind = "IDE/CF full 8 MiB geometry"
     elif size % 512 == 0:
