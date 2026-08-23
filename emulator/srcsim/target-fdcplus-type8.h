@@ -16,6 +16,7 @@
 #define TARGET_FDCPLUS_TYPE8_H
 
 #include "sim.h"
+#include "simdefs.h"
 
 void target_fdcplus_type8_init(void);
 void target_fdcplus_type8_reset(void);
