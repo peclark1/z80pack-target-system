@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from gui.image_info import CF_FULL_SIZE, DSI_SD_SIZE, inspect_image, sha256_file
+from gui.image_info import CF_FULL_SIZE, DSI_SD_SIZE, IBM3740_SIZE, inspect_image, sha256_file
 
 
 class GuiImageInfoTests(unittest.TestCase):
@@ -12,12 +12,14 @@ class GuiImageInfoTests(unittest.TestCase):
             handle.truncate(size)
         return path
 
-    def test_recognizes_dsi_single_density_image(self):
+    def test_recognizes_shared_ibm3740_geometry(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = self._image(directory, "dsi.img", DSI_SD_SIZE)
+            path = self._image(directory, "disk.img", IBM3740_SIZE)
             info = inspect_image(path)
-            self.assertIn("DSI FDC-1 SD", info.kind)
+            self.assertIn("IBM 3740", info.kind)
+            self.assertIn("FDC+ Type 8", info.kind)
             self.assertEqual(info.size, 256256)
+            self.assertEqual(DSI_SD_SIZE, IBM3740_SIZE)
 
     def test_recognizes_full_cf_geometry(self):
         with tempfile.TemporaryDirectory() as directory:
