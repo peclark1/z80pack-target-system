@@ -7,10 +7,23 @@ from pathlib import Path
 
 import core_app as _core
 from image_info import IBM3740_SIZE
+from launcher import FLOPPY_DSI, FLOPPY_FDCPLUS, FLOPPY_NONE
 from rom_image import inspect_rom
 from window_state import WindowState, load_window_state, save_window_state
 
 _BaseTargetSimWindow = _core.TargetSimWindow
+
+FLOPPY_CHOICES = (
+    FLOPPY_NONE,
+    FLOPPY_DSI,
+    FLOPPY_FDCPLUS,
+)
+FLOPPY_LABELS = (
+    "None — IDE/CF only",
+    "Digital Systems FDC-1",
+    "Altair FDC+ — Type 8 / iCOM 3712",
+)
+FLOPPY_DSI_INDEX = FLOPPY_CHOICES.index(FLOPPY_DSI)
 
 
 def _find_main_paned(window):
@@ -42,6 +55,15 @@ def _find_settings_box(window):
         if isinstance(nested, _core.Gtk.Box):
             return nested
     return None
+
+
+def _box_children(box):
+    children = []
+    child = box.get_first_child()
+    while child is not None:
+        children.append(child)
+        child = child.get_next_sibling()
+    return children
 
 
 class RomRow(_core.Gtk.Frame):
@@ -139,7 +161,7 @@ class RomRow(_core.Gtk.Frame):
 
 
 class TargetSimWindow(_BaseTargetSimWindow):
-    """Core GUI window with ROM/FDC+ selection and persistent window state."""
+    """Core GUI window with ROM/floppy selection and persistent window state."""
 
     def __init__(self, *args, **kwargs):
         state = load_window_state()
@@ -161,10 +183,68 @@ class TargetSimWindow(_BaseTargetSimWindow):
             child = child.get_next_sibling()
         settings.insert_child_after(self.rom_row, previous)
 
-        # The FDC+ backend supports four Type 8 units. Keep these controls
-        # separate from DSI even though both use 256,256-byte IBM-3740 images.
-        settings.append(_core.Gtk.Separator())
-        settings.append(self._section_label("Altair FDC+ — Type 8 / iCOM 3712"))
+        # Core_app owns the historical DSI widgets. Move that entire section
+        # into a revealer so the selected floppy controller is the only panel
+        # visible. Leave the separator before it as the fixed section boundary.
+        children = _box_children(settings)
+        dsi_label = next(
+            (
+                widget
+                for widget in children
+                if isinstance(widget, _core.Gtk.Label)
+                and widget.get_text() == "Digital Systems FDC-1"
+            ),
+            None,
+        )
+        if dsi_label is None:
+            raise RuntimeError("unable to locate the DSI settings section")
+
+        dsi_start = children.index(dsi_label)
+        dsi_end = children.index(self.dsi_trace)
+        if dsi_end < dsi_start:
+            raise RuntimeError("invalid DSI settings layout")
+        dsi_separator = children[dsi_start - 1] if dsi_start else None
+
+        dsi_box = _core.Gtk.Box(orientation=_core.Gtk.Orientation.VERTICAL, spacing=12)
+        for widget in children[dsi_start : dsi_end + 1]:
+            settings.remove(widget)
+            dsi_box.append(widget)
+
+        self.dsi_revealer = _core.Gtk.Revealer()
+        self.dsi_revealer.set_transition_type(_core.Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.dsi_revealer.set_child(dsi_box)
+
+        self.floppy_controller = _core.Gtk.DropDown.new_from_strings(list(FLOPPY_LABELS))
+        configured_controller = getattr(self.config, "floppy_controller", FLOPPY_NONE)
+        try:
+            configured_index = FLOPPY_CHOICES.index(configured_controller)
+        except ValueError:
+            configured_index = 0
+        self._target_floppy_selection = configured_index
+        self.floppy_controller.set_selected(configured_index)
+        self.floppy_controller.set_tooltip_text(
+            "DSI FDC-1 and Altair FDC+ Type 8 are mutually exclusive in one emulator session."
+        )
+        self.floppy_controller.connect("notify::selected", self._floppy_changed)
+
+        selector_box = _core.Gtk.Box(
+            orientation=_core.Gtk.Orientation.VERTICAL,
+            spacing=4,
+        )
+        selector_box.append(_core.Gtk.Label(label="Floppy controller", xalign=0))
+        selector_box.append(self.floppy_controller)
+        selector_hint = _core.Gtk.Label(
+            label="Only the selected floppy controller is attached; its settings expand below.",
+            xalign=0,
+        )
+        selector_hint.set_wrap(True)
+        selector_hint.add_css_class("dim-label")
+        selector_box.append(selector_hint)
+
+        # Build the FDC+ panel as a separate revealer. The backend supports four
+        # Type 8 units, but none are attached while DSI (or None) is selected.
+        fdcplus_box = _core.Gtk.Box(orientation=_core.Gtk.Orientation.VERTICAL, spacing=12)
+        fdcplus_box.append(self._section_label("Altair FDC+ — Type 8 / iCOM 3712"))
 
         self.fdcplus_rows = []
         for number in range(4):
@@ -176,7 +256,7 @@ class TargetSimWindow(_BaseTargetSimWindow):
             row.set_path(getattr(self.config, f"fdcplus{number}", ""))
             setattr(self, f"fdcplus{number}", row)
             self.fdcplus_rows.append(row)
-            settings.append(row)
+            fdcplus_box.append(row)
 
         self.fdcplus_write = _core.Gtk.CheckButton(label="Allow FDC+ writes")
         self.fdcplus_write.set_active(getattr(self.config, "fdcplus_write", False))
@@ -184,7 +264,7 @@ class TargetSimWindow(_BaseTargetSimWindow):
             "Off by default to protect disk images. Prefer Work Copy before enabling writes."
         )
         self.fdcplus_write.connect("toggled", self._controls_changed)
-        settings.append(self.fdcplus_write)
+        fdcplus_box.append(self.fdcplus_write)
 
         safety = _core.Gtk.Label(
             label=(
@@ -195,12 +275,23 @@ class TargetSimWindow(_BaseTargetSimWindow):
         )
         safety.set_wrap(True)
         safety.add_css_class("dim-label")
-        settings.append(safety)
+        fdcplus_box.append(safety)
 
         self.fdcplus_trace = _core.Gtk.CheckButton(label="FDC+ command trace")
         self.fdcplus_trace.set_active(getattr(self.config, "fdcplus_trace", False))
         self.fdcplus_trace.connect("toggled", self._controls_changed)
-        settings.append(self.fdcplus_trace)
+        fdcplus_box.append(self.fdcplus_trace)
+
+        self.fdcplus_revealer = _core.Gtk.Revealer()
+        self.fdcplus_revealer.set_transition_type(
+            _core.Gtk.RevealerTransitionType.SLIDE_DOWN
+        )
+        self.fdcplus_revealer.set_child(fdcplus_box)
+
+        insertion_point = dsi_separator
+        settings.insert_child_after(selector_box, insertion_point)
+        settings.insert_child_after(self.dsi_revealer, selector_box)
+        settings.insert_child_after(self.fdcplus_revealer, self.dsi_revealer)
 
         # GTK recommends get/set_default_size() for persistent window sizing;
         # it retains the normal (unmaximized) dimensions as the user resizes.
@@ -212,6 +303,7 @@ class TargetSimWindow(_BaseTargetSimWindow):
             self.maximize()
 
         self._profile_changed()
+        self._update_floppy_visibility()
         self._controls_changed()
 
     @staticmethod
@@ -224,6 +316,26 @@ class TargetSimWindow(_BaseTargetSimWindow):
         _core.shutil.copy2(source, destination)
         return destination
 
+    def _effective_floppy_index(self) -> int:
+        if self.profile.get_selected() == 1:
+            return FLOPPY_DSI_INDEX
+        return int(self.floppy_controller.get_selected())
+
+    def _update_floppy_visibility(self) -> None:
+        if not hasattr(self, "dsi_revealer"):
+            return
+        selected = self._effective_floppy_index()
+        self.dsi_revealer.set_reveal_child(FLOPPY_CHOICES[selected] == FLOPPY_DSI)
+        self.fdcplus_revealer.set_reveal_child(
+            FLOPPY_CHOICES[selected] == FLOPPY_FDCPLUS
+        )
+
+    def _floppy_changed(self, *_args) -> None:
+        if self.profile.get_selected() == 0:
+            self._target_floppy_selection = int(self.floppy_controller.get_selected())
+        self._update_floppy_visibility()
+        self._controls_changed()
+
     def _current_config(self):
         config = super()._current_config()
         if hasattr(self, "rom_row"):
@@ -235,7 +347,11 @@ class TargetSimWindow(_BaseTargetSimWindow):
         for number in range(4):
             name = f"fdcplus{number}"
             row = getattr(self, name, None)
-            setattr(config, name, row.get_path() if row is not None else getattr(self.config, name, ""))
+            setattr(
+                config,
+                name,
+                row.get_path() if row is not None else getattr(self.config, name, ""),
+            )
 
         if hasattr(self, "fdcplus_trace"):
             config.fdcplus_trace = self.fdcplus_trace.get_active()
@@ -243,6 +359,13 @@ class TargetSimWindow(_BaseTargetSimWindow):
         else:
             config.fdcplus_trace = getattr(self.config, "fdcplus_trace", False)
             config.fdcplus_write = getattr(self.config, "fdcplus_write", False)
+
+        if hasattr(self, "_target_floppy_selection"):
+            config.floppy_controller = FLOPPY_CHOICES[self._target_floppy_selection]
+        else:
+            config.floppy_controller = getattr(
+                self.config, "floppy_controller", FLOPPY_NONE
+            )
         return config
 
     def _profile_changed(self, *args):
@@ -250,6 +373,16 @@ class TargetSimWindow(_BaseTargetSimWindow):
         target_mode = self.profile.get_selected() == 0
         if hasattr(self, "rom_row"):
             self.rom_row.set_sensitive(target_mode)
+
+        if hasattr(self, "floppy_controller"):
+            self.floppy_controller.set_sensitive(target_mode)
+            desired = (
+                self._target_floppy_selection if target_mode else FLOPPY_DSI_INDEX
+            )
+            if self.floppy_controller.get_selected() != desired:
+                self.floppy_controller.set_selected(desired)
+            self._update_floppy_visibility()
+
         if hasattr(self, "fdcplus_rows"):
             for row in self.fdcplus_rows:
                 row.set_sensitive(target_mode)
