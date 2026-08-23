@@ -36,10 +36,16 @@ class LaunchConfig:
     cf1: str = ""
     dsi0: str = ""
     dsi1: str = ""
+    fdcplus0: str = ""
+    fdcplus1: str = ""
+    fdcplus2: str = ""
+    fdcplus3: str = ""
     ide_trace: bool = False
     dsi_trace: bool = False
     dsi_write: bool = False
     dsi_bootstrap: bool = False
+    fdcplus_trace: bool = False
+    fdcplus_write: bool = False
     fp_port: str = "00"
     cpu_mhz: int = 4
 
@@ -64,6 +70,10 @@ class LaunchConfig:
             ("CF1", self.cf1),
             ("DSI0", self.dsi0),
             ("DSI1", self.dsi1),
+            ("FDCPLUS0", self.fdcplus0),
+            ("FDCPLUS1", self.fdcplus1),
+            ("FDCPLUS2", self.fdcplus2),
+            ("FDCPLUS3", self.fdcplus3),
         ):
             if value and not Path(value).expanduser().is_file():
                 errors.append(f"{label} image not found: {value}")
@@ -77,8 +87,8 @@ class LaunchConfig:
         if self.profile == PROFILE_DSI_COMPAT and not self.dsi0:
             errors.append("DSI compatibility mode requires a DSI0 image")
 
-        if self.profile == PROFILE_TARGET and not self.cf0 and not self.dsi0:
-            errors.append("target mode requires at least CF0 or DSI0")
+        if self.profile == PROFILE_TARGET and not self.cf0 and not self.dsi0 and not self.fdcplus0:
+            errors.append("target mode requires at least CF0, DSI0, or FDCPLUS0")
 
         return errors
 
@@ -94,13 +104,17 @@ class LaunchConfig:
 
         if self.profile == PROFILE_TARGET:
             # Explicit empty values suppress Makefile defaults when the user
-            # intentionally wants a DSI-only target session. An empty
-            # ROM_IMAGE means use the pinned/current build/target-monitor.hex.
+            # intentionally wants a non-IDE target session. An empty ROM_IMAGE
+            # means use the pinned/current build/target-monitor.hex.
             argv.extend(
                 [
                     f"ROM_IMAGE={self.rom_image}",
                     f"CF0={self.cf0}",
                     f"CF1={self.cf1}",
+                    f"FDCPLUS0={self.fdcplus0}",
+                    f"FDCPLUS1={self.fdcplus1}",
+                    f"FDCPLUS2={self.fdcplus2}",
+                    f"FDCPLUS3={self.fdcplus3}",
                 ]
             )
 
@@ -112,6 +126,8 @@ class LaunchConfig:
                 f"DSI_TRACE={int(self.dsi_trace)}",
                 f"DSI_WRITE={int(self.dsi_write)}",
                 f"DSI_BOOTSTRAP={int(self.dsi_bootstrap)}",
+                f"FDCPLUS_TRACE={int(self.fdcplus_trace)}",
+                f"FDCPLUS_WRITE={int(self.fdcplus_write)}",
                 f"FP_PORT={self.fp_port.upper()}",
                 f"CPU_MHZ={int(self.cpu_mhz)}",
             ]
@@ -124,8 +140,9 @@ class LaunchConfig:
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         # Never persist write authorization. Each application launch must
-        # explicitly opt in again before an archival DSI image can be changed.
+        # explicitly opt in again before an archival disk image can be changed.
         value["dsi_write"] = False
+        value["fdcplus_write"] = False
         return value
 
     @classmethod
@@ -133,6 +150,7 @@ class LaunchConfig:
         fields = cls.__dataclass_fields__
         config = cls(**{k: v for k, v in value.items() if k in fields})
         config.dsi_write = False
+        config.fdcplus_write = False
         return config
 
 
