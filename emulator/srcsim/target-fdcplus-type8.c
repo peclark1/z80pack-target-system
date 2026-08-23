@@ -54,12 +54,21 @@
 #define CMD_SHIFT_BUFFER            0x41
 #define CMD_RESET                   0x81
 
-/* FD3712 controller status bits. BUSY is always clear after a command here. */
+/*
+ * FD3712 controller status bits.  The physical controller reports the
+ * selected unit in bits 1-2 and returns bit 6 set.  Those unit bits are not
+ * errors; reproducing them is important because it catches BIOS code that
+ * accidentally treats drive 1 (status bit 1 set) as a seek failure.
+ */
 #define STAT_BUSY                   0x01
-#define STAT_SEEK_ERROR             0x02
+#define STAT_UNIT0                  0x02
+#define STAT_UNIT1                  0x04
 #define STAT_CRC_ERROR              0x08
 #define STAT_WRITE_PROTECT          0x10
 #define STAT_NOT_READY              0x20
+#define STAT_ALWAYS_ONE             0x40
+#define STAT_DDAM                   0x80
+#define STAT_UNIT_MASK              (STAT_UNIT0 | STAT_UNIT1)
 
 struct fdcplus_drive {
     FILE *fp;
@@ -183,7 +192,12 @@ static int drive_ready(void)
 
 static BYTE status_value(void)
 {
-    BYTE status = error_status & (BYTE) ~STAT_BUSY;
+    BYTE status = (BYTE) (error_status &
+                          (STAT_CRC_ERROR | STAT_WRITE_PROTECT |
+                           STAT_NOT_READY | STAT_DDAM));
+
+    status |= STAT_ALWAYS_ONE;
+    status |= (BYTE) ((selected_drive & 0x03) << 1);
 
     if (!drive_ready())
         status |= STAT_NOT_READY;
@@ -220,7 +234,7 @@ static int position_valid(void)
     }
 
     if (current_track[selected_drive] >= FDCPLUS_TRACKS) {
-        error_status |= STAT_SEEK_ERROR | STAT_CRC_ERROR;
+        error_status |= STAT_CRC_ERROR;
         return 0;
     }
 
@@ -355,7 +369,7 @@ static void seek_track(void)
     }
 
     if (requested_track >= FDCPLUS_TRACKS) {
-        error_status |= STAT_SEEK_ERROR | STAT_CRC_ERROR;
+        error_status |= STAT_CRC_ERROR;
         trace_operation("SEEK invalid");
         return;
     }
