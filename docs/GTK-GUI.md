@@ -128,7 +128,24 @@ A CF work copy uses the same `tools/make_cf_workcopy.py` helper used by the comm
 - DSI writes
 - DSI command trace
 
-The GUI recognizes the FDC-1 single-density geometry as exactly 256,256 bytes (`77 x 26 x 128`). DSI writes remain off by default. Prefer selecting an archival image, clicking **Work Copy**, and only then enabling **Allow DSI writes**. GUI-created DSI work copies never overwrite an existing work image.
+The DSI FDC-1 single-density format is exactly 256,256 bytes (`77 x 26 x 128`). That byte size is also the flat IBM-3740 geometry used by FDC+ Type 8, so the generic image-info line identifies such files as IBM-3740 rather than guessing which controller they belong to. The section in which the image is attached determines the emulated controller.
+
+DSI writes remain off by default. Prefer selecting an archival image, clicking **Work Copy**, and only then enabling **Allow DSI writes**. GUI-created DSI work copies never overwrite an existing work image.
+
+### Altair FDC+ — Type 8 / iCOM 3712
+
+Target System mode exposes all four Type 8 units supported by the emulator:
+
+- FDC+ Drive 0 through Drive 3 image selectors
+- one-click Type 8 working copies
+- **Allow FDC+ writes**, off by default
+- **FDC+ command trace**
+
+Each Type 8 image must be an exact 256,256-byte IBM-3740 image (`77 tracks x 26 sectors x 128 bytes`). The GUI validates that size before launch. A **Work Copy** creates a new disposable image under `build/` with an `fdcplusN-gui-work...img` name, leaving the selected source untouched.
+
+Even a work copy is attached read-only to the emulated FDC+ until **Allow FDC+ writes** is explicitly enabled. Write permission is deliberately not persisted across GUI launches. The same safety rule applies to DSI writes.
+
+FDC+ controls are disabled in DSI Compatibility mode because that profile exists specifically to reproduce the historical DSI 64K-RAM bootstrap environment.
 
 ## Session controls
 
@@ -153,7 +170,7 @@ Window size/maximized/divider state is stored separately in:
 ~/.config/z80pack-target-system/window.json
 ```
 
-Disk and ROM images themselves are never copied into the configuration directory. Only their selected paths and GUI options are saved. On GTK4/Wayland, absolute top-level X/Y window placement remains compositor-managed.
+Disk and ROM images themselves are never copied into the configuration directory. Only their selected paths and GUI options are saved. Disk write authorization is never persisted. On GTK4/Wayland, absolute top-level X/Y window placement remains compositor-managed.
 
 ## Planned enhancements
 
