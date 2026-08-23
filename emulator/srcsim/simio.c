@@ -52,6 +52,30 @@ static BYTE console_io_status_in(void)
     return cio_status;
 }
 
+/* Serial I/O V3 channel A is a Z85C30 SCC. For console-selection testing we
+ * reuse the same host terminal backend as Console I/O but expose SCC RR0 bit
+ * positions: RX ready=bit0, TX ready=bit2. SCC register-programming writes to
+ * A1h are accepted and ignored; the target monitor/CP/M only needs RR0 reads
+ * after initialization.
+ */
+static BYTE serial_io_status_in(void)
+{
+    BYTE sio_status = imsai_sio1a_status_in();
+    BYTE scc_status = 0;
+
+    if (sio_status & 0x02)
+        scc_status |= 0x01;      /* RX ready -> SCC RR0 bit 0 */
+    if (sio_status & 0x01)
+        scc_status |= 0x04;      /* TX ready -> SCC RR0 bit 2 */
+
+    return scc_status;
+}
+
+static void serial_io_control_out(BYTE data)
+{
+    UNUSED(data);
+}
+
 /*
  * Ctrl-] (ASCII 1Dh) is reserved as the targetsim host escape key. Ctrl-C
  * remains a normal guest character so CP/M programs retain their historical
@@ -167,6 +191,10 @@ in_func_t *const port_in[256] = {
     [0x7e] = target_dsi_fdc1_bootstrap_in,
     [0x7f] = target_dsi_fdc1_status_in,
 
+    /* S100Computers Serial I/O V3 channel A / SCC RR0 + data. */
+    [0xa1] = serial_io_status_in,
+    [0xa3] = console_io_data_in,
+
     [0xff] = front_panel_in
 };
 
@@ -193,6 +221,10 @@ out_func_t *const port_out[256] = {
     [0x7d] = target_dsi_fdc1_dma_low_out,
     [0x7e] = target_dsi_fdc1_dma_high_out,
     [0x7f] = target_dsi_fdc1_command_out,
+
+    /* S100Computers Serial I/O V3 channel A. */
+    [0xa1] = serial_io_control_out,
+    [0xa3] = imsai_sio1a_data_out,
 
     [0xff] = front_panel_out
 };
