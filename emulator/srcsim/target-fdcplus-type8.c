@@ -270,6 +270,13 @@ static void write_sector(void)
     uint64_t offset;
     size_t count;
 
+    /* A WRITE ends the current buffer-load phase even when the operation
+     * fails. Keep write_count/data intact so an immediate controller retry can
+     * reuse the sector, while making the next WRTBUF sequence restart at byte
+     * zero rather than overflowing a full prior buffer.
+     */
+    write_index = 0;
+
     if (!position_valid()) {
         trace_operation("WRITE failed");
         return;
@@ -307,10 +314,6 @@ static void write_sector(void)
         return;
     }
 
-    /* Retain the buffer for a possible WRITE retry, but restart the load
-     * pointer when software begins filling the next sector buffer.
-     */
-    write_index = 0;
     trace_operation("WRITE");
 }
 
