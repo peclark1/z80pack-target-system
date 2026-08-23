@@ -43,7 +43,9 @@ TARGET_INPUTS := \
 	emulator/srcsim/target-dsi-fdc1.c \
 	emulator/srcsim/target-dsi-fdc1.h \
 	emulator/srcsim/target-fdcplus-type8.c \
-	emulator/srcsim/target-fdcplus-type8.h
+	emulator/srcsim/target-fdcplus-type8.h \
+	emulator/srcsim/target-serialio-usb.c \
+	emulator/srcsim/target-serialio-usb.h
 
 .PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-selected-rom smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
 
@@ -71,6 +73,7 @@ help:
 	  '                                   Type 8 images are 77x26x128 IBM-3740 (256256 bytes)' \
 	  'make run FDCPLUS0=/path/disk.dsk FDCPLUS_WRITE=1' \
 	  '                                   Explicitly allow writes to the Type 8 image' \
+	  '                                   Serial I/O USB PTY appears at /tmp/targets100sim-usb-<uid>' \
 	  'make cf-work CF0_SOURCE=/path/a.img [CF1_SOURCE=/path/b.img]' \
 	  '                                   Create work copies only if they do not exist' \
 	  'make cf-reset                      Delete disposable lab work copies' \
