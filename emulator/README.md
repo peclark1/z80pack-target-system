@@ -30,14 +30,41 @@ Implemented now:
   - uses z80pack's second IMSAI SIO channel as the host-side backend
   - TX-ready bit `01H`, RX-ready bit `02H`
   - local UNIX socket backend `targets100sim.mio`
+- Serial I/O V3 DLP-USB245R host-link subset
+  - USB FIFO handshake/status at `AAH`
+  - USB FIFO data at `ACH`
+  - RX-ready bit 7 and TX-ready bit 6 are active low, matching the physical board
+  - exposed to Linux as a pseudo-terminal suitable for pySerial
+  - stable default endpoint `/tmp/targets100sim-usb-<uid>`
+  - optional endpoint override with `TARGET_SERIALIO_USB_TTY`
 
 Not implemented yet:
 
-- Serial I/O V3 / Z85C30 channel A at `A1H/A3H`
-- Altair FDC/FDC+ integration
+- Serial I/O V3 Z85C30 channel A at `A1H/A3H`
+- full Serial I/O V3 8255 parallel-port behavior at `A8H-ABH`
 - CP/M disk-image build/install automation
 - broad ATA command coverage beyond the commands required by current firmware/BIOS work
 - detailed instruction-level I/O tracing beyond the optional IDE command trace
+
+## Serial I/O USB host-link bridge
+
+The physical Serial I/O V3 board presents the DLP-USB245R FIFO to the Z80 as a byte data register plus active-low FIFO-ready signals. `HOST.COM` only needs that software-visible subset, so the emulator does not need to model USB packets or a UART baud clock.
+
+At emulator startup a PTY master is allocated and a stable symlink is created for the slave side:
+
+```text
+/tmp/targets100sim-usb-<uid> -> /dev/pts/N
+```
+
+The emulator prints the actual mapping when it starts. The production `s100-host-link` utility can open the stable path through pySerial exactly as it opens a physical USB serial device. Closing and reopening Host Link does not require restarting the emulator; `HOST.COM` continues its normal readiness advertisements.
+
+The endpoint may be changed before starting the emulator:
+
+```sh
+TARGET_SERIALIO_USB_TTY=/tmp/my-imsai-usb make run
+```
+
+A stale symlink created by the same user is replaced on the next start. A non-symlink or another user's path is never overwritten.
 
 ## Dual IDE/CF abstraction
 
@@ -56,7 +83,9 @@ Missing images behave as not-ready devices. Writable files permit ATA WRITE comm
 
 The physical Console I/O and MIO are modeled at their Z80-visible register interface, while z80pack's mature terminal/socket code provides host-side character transport. The target-specific wrapper translates status bits where required.
 
-This avoids emulating irrelevant VGA, PS/2, UART, and TTL internals while still running the exact target firmware I/O instructions unchanged.
+The Serial I/O USB FIFO is kept separate because its physical software interface uses active-low DLP-USB245R handshakes rather than the IMSAI SIO ready-bit convention. A PTY still gives the Linux side the same familiar serial-device API.
+
+This avoids emulating irrelevant VGA, PS/2, UART, and USB internals while still running the exact target firmware and CP/M I/O instructions unchanged.
 
 ## Generated machine
 

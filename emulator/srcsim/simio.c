@@ -23,6 +23,7 @@
 #include "target-ide.h"
 #include "target-dsi-fdc1.h"
 #include "target-fdcplus-type8.h"
+#include "target-serialio-usb.h"
 
 /* The upstream IMSAI HAL expects the machine layer to supply the connector
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
@@ -167,6 +168,10 @@ in_func_t *const port_in[256] = {
     [0x7e] = target_dsi_fdc1_bootstrap_in,
     [0x7f] = target_dsi_fdc1_status_in,
 
+    /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
+    [0xaa] = target_serialio_usb_status_in,
+    [0xac] = target_serialio_usb_data_in,
+
     [0xff] = front_panel_in
 };
 
@@ -194,6 +199,9 @@ out_func_t *const port_out[256] = {
     [0x7e] = target_dsi_fdc1_dma_high_out,
     [0x7f] = target_dsi_fdc1_command_out,
 
+    /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
+    [0xac] = target_serialio_usb_data_out,
+
     [0xff] = front_panel_out
 };
 
@@ -205,6 +213,7 @@ void init_io(void)
     target_ide_init();
     target_dsi_fdc1_init();
     target_fdcplus_type8_init();
+    target_serialio_usb_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -216,12 +225,14 @@ void reset_io(void)
     target_ide_reset();
     target_dsi_fdc1_reset();
     target_fdcplus_type8_reset();
+    target_serialio_usb_reset();
 }
 
 void exit_io(void)
 {
     int i;
 
+    target_serialio_usb_exit();
     target_fdcplus_type8_exit();
     target_dsi_fdc1_exit();
     target_ide_exit();
