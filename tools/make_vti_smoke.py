@@ -24,16 +24,16 @@ BOOTSTRAP = bytes.fromhex(
     "36c923"            # MVI M,C9 ('I'|80H) / INX H
     "36a023"            # MVI M,A0 (space) / INX H
     "db03e601ca0f00"    # wait_tx: IN 03 / ANI 01 / JZ wait_tx
-    "dbe8fe0bc24a00"    # IN E8 / CPI 0B / JNZ fail
+    "dbe8fe0bc25000"    # IN E8 / CPI 0B / JNZ fail
     "3e01d3e8"          # MVI A,01 / OUT E8 (normal read channel)
-    "dbeefe0ec24a00"    # IN EE / CPI 0E / JNZ fail
-    "dbeffed8c24a00"    # IN EF / CPI D8 / JNZ fail (3800)
+    "dbeefe0ec25000"    # IN EE / CPI 0E / JNZ fail
+    "dbeffed8c25000"    # IN EF / CPI D8 / JNZ fail (3800)
     "3e41d3e8"          # MVI A,41 / OUT E8 (overwrite/right channel)
-    "dbeefe0fc24a00"    # IN EE / CPI 0F / JNZ fail (4050 high byte)
-    "214c00"            # LXI H,message
+    "dbeefe0fc25000"    # IN EE / CPI 0F / JNZ fail (4050 high byte)
+    "215200"            # LXI H,message
     "0611"              # MVI B,17
-    "db03e601ca3800"    # txwait: IN 03 / ANI 01 / JZ txwait
-    "7ed3022305c23800"  # loop: MOV A,M / OUT 02 / INX H / DCR B / JNZ txwait
+    "db03e601ca3f00"    # txwait: IN 03 / ANI 01 / JZ txwait
+    "7ed3022305c23f00"  # loop: MOV A,M / OUT 02 / INX H / DCR B / JNZ txwait
     "f376"              # DI / HLT
     "f376"              # fail: DI / HLT
     "565449204845414454455354204f4b0d0a"  # "VTI HEADTEST OK\r\n"
