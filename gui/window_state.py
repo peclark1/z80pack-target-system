@@ -14,17 +14,23 @@ class WindowState:
     height: int = 800
     maximized: bool = False
     paned_position: int = 450
+    last_rom_directory: str = ""
+    last_disk_directory: str = ""
 
     def validated(self) -> "WindowState":
         """Return sane values if a saved state file is stale or corrupted."""
         width = self.width if 640 <= int(self.width) <= 16384 else 1280
         height = self.height if 480 <= int(self.height) <= 16384 else 800
         paned = self.paned_position if 200 <= int(self.paned_position) <= 4096 else 450
+        rom_directory = self.last_rom_directory if isinstance(self.last_rom_directory, str) else ""
+        disk_directory = self.last_disk_directory if isinstance(self.last_disk_directory, str) else ""
         return WindowState(
             width=int(width),
             height=int(height),
             maximized=bool(self.maximized),
             paned_position=int(paned),
+            last_rom_directory=rom_directory,
+            last_disk_directory=disk_directory,
         )
 
     @classmethod
