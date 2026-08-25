@@ -9,15 +9,30 @@ class WindowStateTests(unittest.TestCase):
     def test_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "window.json"
-            expected = WindowState(width=1440, height=900, maximized=True, paned_position=520)
+            expected = WindowState(
+                width=1440,
+                height=900,
+                maximized=True,
+                paned_position=520,
+                last_rom_directory="/tmp/roms",
+                last_disk_directory="/tmp/disks",
+            )
             save_window_state(expected, path)
             self.assertEqual(load_window_state(path), expected)
 
     def test_bad_values_fall_back_to_safe_defaults(self):
-        state = WindowState(width=10, height=99999, paned_position=1).validated()
+        state = WindowState(
+            width=10,
+            height=99999,
+            paned_position=1,
+            last_rom_directory=123,
+            last_disk_directory=None,
+        ).validated()
         self.assertEqual(state.width, 1280)
         self.assertEqual(state.height, 800)
         self.assertEqual(state.paned_position, 450)
+        self.assertEqual(state.last_rom_directory, "")
+        self.assertEqual(state.last_disk_directory, "")
 
     def test_missing_file_uses_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
