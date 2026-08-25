@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the synthetic DSI workstation image and verify VTI/head-tester I/O."""
+"""Boot the synthetic DSI workstation image and verify VTI/head-tester/SIO I/O."""
 
 from __future__ import annotations
 
@@ -77,7 +77,13 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path) -> str:
         )
         read_file.close()
 
+        # The guest initializes the VTI before waiting for SIO receive-ready.
+        # Once the screen mmap exists, feed one real byte through stdin. The
+        # bootstrap requires that IN 02H return exactly 'K' before it prints
+        # the success message, so this catches regressions where the SIO
+        # backend incorrectly returns its initial saved NUL character.
         wait_for_vti(screen, proc)
+        os.write(write_fd, b"K")
 
         try:
             output, _ = proc.communicate(timeout=10)
@@ -134,7 +140,7 @@ def main() -> None:
         )
         raise SystemExit(1)
 
-    print("workstation smoke test passed: native IMSAI SIO, VTI mapping, and head-tester I/O are working")
+    print("workstation smoke test passed: native IMSAI SIO RX/TX, VTI mapping, and head-tester I/O are working")
 
 
 if __name__ == "__main__":
