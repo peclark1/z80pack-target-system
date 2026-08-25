@@ -1,41 +1,44 @@
 #!/usr/bin/env python3
-"""Boot the synthetic DSI/VTI image and verify VTI video and keyboard I/O."""
+"""Boot the synthetic DSI/VTI image and verify display-memory mapping."""
 
 from __future__ import annotations
 
 import argparse
 import os
 from pathlib import Path
-import stat
 import subprocess
 import sys
 import time
 
-SUCCESS_TEXT = "VTI KBD OK"
-EXPECTED_SCREEN = bytes.fromhex("d6d4c9a0cb")  # "VTI K" with VTI character bit set
+SUCCESS_TEXT = "VTI DISPLAY OK"
+EXPECTED_SCREEN = bytes.fromhex("d6d4c9a0")  # "VTI " with VTI character bit set
 
 
-def wait_for_vti(screen: Path, keyboard: Path, proc: subprocess.Popen, timeout: float = 5.0) -> None:
+def wait_for_vti(screen: Path, proc: subprocess.Popen, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError("targetsim exited before the VTI keyboard became ready")
+            # The screen file is persistent after a clean emulator exit, so
+            # give it one final check below before treating this as failure.
+            break
         try:
-            screen_ready = screen.stat().st_size == 1024
-            keyboard_ready = stat.S_ISFIFO(keyboard.stat().st_mode)
+            if screen.stat().st_size == 1024:
+                return
         except OSError:
-            screen_ready = keyboard_ready = False
-        if screen_ready and keyboard_ready:
-            return
+            pass
         time.sleep(0.01)
-    raise RuntimeError("timed out waiting for VTI screen file and keyboard FIFO")
+
+    try:
+        if screen.stat().st_size == 1024:
+            return
+    except OSError:
+        pass
+    raise RuntimeError("timed out waiting for the 1024-byte VTI screen file")
 
 
-def run(targetsim: Path, config: Path, disk: Path, screen: Path, keyboard: Path) -> str:
+def run(targetsim: Path, config: Path, disk: Path, screen: Path) -> str:
     screen.parent.mkdir(parents=True, exist_ok=True)
-    keyboard.parent.mkdir(parents=True, exist_ok=True)
     screen.unlink(missing_ok=True)
-    keyboard.unlink(missing_ok=True)
 
     env = os.environ.copy()
     env["TARGET_DSI0"] = str(disk.resolve())
@@ -43,8 +46,9 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path, keyboard: Path)
     env["TARGET_DSI_WRITE"] = "0"
     env["TARGET_DSI_BOOTSTRAP"] = "1"
     env["TARGET_VTI_ENABLE"] = "1"
+    env["TARGET_HEADTEST_ENABLE"] = "0"
     env["TARGET_VTI_SCREEN"] = str(screen.resolve())
-    env["TARGET_VTI_KBD"] = str(keyboard.resolve())
+    env.pop("TARGET_VTI_KBD", None)
     env.pop("TARGET_DSI1", None)
     env.pop("TARGET_CF0", None)
     env.pop("TARGET_CF1", None)
@@ -68,12 +72,7 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path, keyboard: Path)
         )
         read_file.close()
 
-        wait_for_vti(screen, keyboard, proc)
-        fd = os.open(keyboard, os.O_WRONLY | os.O_NONBLOCK)
-        try:
-            os.write(fd, b"K")
-        finally:
-            os.close(fd)
+        wait_for_vti(screen, proc)
 
         try:
             output, _ = proc.communicate(timeout=10)
@@ -98,11 +97,13 @@ def main() -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--disk", required=True, type=Path)
     parser.add_argument("--screen", required=True, type=Path)
-    parser.add_argument("--keyboard", required=True, type=Path)
+    # Kept as an ignored compatibility argument so existing CI invocations do
+    # not have to care that the restored workstation VTI is display-only.
+    parser.add_argument("--keyboard", type=Path)
     args = parser.parse_args()
 
     try:
-        output = run(args.targetsim, args.config, args.disk, args.screen, args.keyboard)
+        output = run(args.targetsim, args.config, args.disk, args.screen)
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(1)
@@ -129,7 +130,7 @@ def main() -> None:
         )
         raise SystemExit(1)
 
-    print("VTI smoke test passed: video RAM mapping and keyboard ports are working")
+    print("VTI smoke test passed: F800H display RAM mapping is working")
 
 
 if __name__ == "__main__":
