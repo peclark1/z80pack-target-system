@@ -24,6 +24,7 @@
 #include "target-dsi-fdc1.h"
 #include "target-fdcplus-type8.h"
 #include "target-serialio-usb.h"
+#include "target-vti.h"
 
 /* The upstream IMSAI HAL expects the machine layer to supply the connector
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
@@ -168,6 +169,15 @@ in_func_t *const port_in[256] = {
     [0x7e] = target_dsi_fdc1_bootstrap_in,
     [0x7f] = target_dsi_fdc1_status_in,
 
+    /* Polymorphic VTI at 8800H-8BFFH. Even ports return keyboard data;
+     * odd ports return keyboard status. The duplicate 8A/8B pair reflects
+     * the VTI's partial address decoding.
+     */
+    [0x88] = target_vti_keyboard_data_in,
+    [0x89] = target_vti_keyboard_status_in,
+    [0x8a] = target_vti_keyboard_data_in,
+    [0x8b] = target_vti_keyboard_status_in,
+
     /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
     [0xaa] = target_serialio_usb_status_in,
     [0xac] = target_serialio_usb_data_in,
@@ -214,6 +224,7 @@ void init_io(void)
     target_dsi_fdc1_init();
     target_fdcplus_type8_init();
     target_serialio_usb_init();
+    target_vti_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -226,12 +237,14 @@ void reset_io(void)
     target_dsi_fdc1_reset();
     target_fdcplus_type8_reset();
     target_serialio_usb_reset();
+    target_vti_reset();
 }
 
 void exit_io(void)
 {
     int i;
 
+    target_vti_exit();
     target_serialio_usb_exit();
     target_fdcplus_type8_exit();
     target_dsi_fdc1_exit();
