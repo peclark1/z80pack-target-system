@@ -24,7 +24,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "sim.h"
 #include "simdefs.h"
+#include "simglb.h"
 #include "simmem.h"
 #include "target-vti.h"
 
