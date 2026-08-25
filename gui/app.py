@@ -4,10 +4,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+
+import cairo
+from gi.repository import Gdk
 
 import core_app as _core
 from image_info import IBM3740_SIZE
-from launcher import FLOPPY_DSI, FLOPPY_FDCPLUS, FLOPPY_NONE
+from launcher import (
+    FLOPPY_DSI,
+    FLOPPY_FDCPLUS,
+    FLOPPY_NONE,
+    PROFILE_DSI_COMPAT,
+    PROFILE_DSI_VTI,
+    PROFILE_TARGET,
+)
 from rom_image import inspect_rom
 from window_state import WindowState, load_window_state, save_window_state
 
@@ -24,6 +35,24 @@ FLOPPY_LABELS = (
     "Altair FDC+ — Type 8 / iCOM 3712",
 )
 FLOPPY_DSI_INDEX = FLOPPY_CHOICES.index(FLOPPY_DSI)
+
+PROFILE_CHOICES = (
+    PROFILE_TARGET,
+    PROFILE_DSI_COMPAT,
+    PROFILE_DSI_VTI,
+)
+PROFILE_LABELS = (
+    "Target System — 60K RAM + 4K ROM",
+    "DSI Compatibility — 64K RAM",
+    "DSI + Polymorphic VTI — 63K RAM + 1K video",
+)
+PROFILE_DSI_VTI_INDEX = PROFILE_CHOICES.index(PROFILE_DSI_VTI)
+
+VTI_SCREEN_PATH = _core.REPO_ROOT / "build" / "vti-screen.bin"
+VTI_KEYBOARD_PATH = _core.REPO_ROOT / "build" / "vti-kbd"
+VTI_COLS = 64
+VTI_ROWS = 16
+VTI_SIZE = VTI_COLS * VTI_ROWS
 
 
 def _find_main_paned(window):
@@ -160,12 +189,144 @@ class RomRow(_core.Gtk.Frame):
         self.set_path("")
 
 
+class VtiDisplay(_core.Gtk.Frame):
+    """Live 64x16 Polymorphic VTI display with semigraphics and keyboard."""
+
+    def __init__(self):
+        super().__init__()
+        self.set_label("Polymorphic VTI — 8800H-8BFFH · click display to type")
+        self.screen = bytes([0xA0]) * VTI_SIZE
+
+        self.area = _core.Gtk.DrawingArea()
+        self.area.set_content_width(768)
+        self.area.set_content_height(300)
+        self.area.set_hexpand(True)
+        self.area.set_focusable(True)
+        self.area.set_draw_func(self._draw)
+        self.set_child(self.area)
+
+        click = _core.Gtk.GestureClick.new()
+        click.connect("pressed", self._clicked)
+        self.area.add_controller(click)
+
+        keys = _core.Gtk.EventControllerKey.new()
+        keys.connect("key-pressed", self._key_pressed)
+        self.area.add_controller(keys)
+
+        self._poll_source = _core.GLib.timeout_add(50, self._poll_screen)
+
+    def shutdown(self) -> None:
+        if self._poll_source:
+            _core.GLib.source_remove(self._poll_source)
+            self._poll_source = 0
+
+    def _clicked(self, *_args) -> None:
+        self.area.grab_focus()
+
+    def _poll_screen(self) -> bool:
+        try:
+            content = VTI_SCREEN_PATH.read_bytes()
+        except OSError:
+            return True
+        if len(content) >= VTI_SIZE:
+            current = content[:VTI_SIZE]
+            if current != self.screen:
+                self.screen = current
+                self.area.queue_draw()
+        return True
+
+    @staticmethod
+    def _ascii_for_key(keyval: int, state) -> int | None:
+        special = {
+            Gdk.KEY_Return: 0x0D,
+            Gdk.KEY_KP_Enter: 0x0D,
+            Gdk.KEY_BackSpace: 0x08,
+            Gdk.KEY_Tab: 0x09,
+            Gdk.KEY_Escape: 0x1B,
+            Gdk.KEY_Delete: 0x7F,
+        }
+        if keyval in special:
+            return special[keyval]
+
+        value = Gdk.keyval_to_unicode(keyval)
+        if not value or value > 0x7F:
+            return None
+
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            if ord("a") <= value <= ord("z"):
+                value = value - ord("a") + 1
+            elif ord("A") <= value <= ord("Z"):
+                value = value - ord("A") + 1
+
+        return value & 0x7F
+
+    def _key_pressed(self, _controller, keyval, _keycode, state) -> bool:
+        value = self._ascii_for_key(keyval, state)
+        if value is None:
+            return False
+        try:
+            fd = os.open(VTI_KEYBOARD_PATH, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(fd, bytes([value]))
+            finally:
+                os.close(fd)
+        except OSError:
+            return False
+        return True
+
+    def _draw(self, _area, cr, width: int, height: int) -> None:
+        cr.set_source_rgb(0.015, 0.02, 0.015)
+        cr.paint()
+
+        cell_w = width / VTI_COLS
+        cell_h = height / VTI_ROWS
+        cr.set_source_rgb(0.68, 1.0, 0.68)
+        cr.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.set_font_size(cell_h * 0.72)
+
+        for offset, value in enumerate(self.screen):
+            row, col = divmod(offset, VTI_COLS)
+            x = col * cell_w
+            y = row * cell_h
+
+            if value & 0x80:
+                code = value & 0x7F
+                if 0x20 <= code <= 0x7E:
+                    cr.move_to(x + cell_w * 0.08, y + cell_h * 0.78)
+                    cr.show_text(chr(code))
+                continue
+
+            # VTI semigraphics divides a character cell into 2x3 blocks.
+            # Hardware uses active-low pixel bits: 0 illuminates the block.
+            bits = ((5, 2), (4, 1), (3, 0))
+            block_w = cell_w / 2.0
+            block_h = cell_h / 3.0
+            for block_row, pair in enumerate(bits):
+                for block_col, bit in enumerate(pair):
+                    if not (value & (1 << bit)):
+                        cr.rectangle(
+                            x + block_col * block_w,
+                            y + block_row * block_h,
+                            block_w + 0.25,
+                            block_h + 0.25,
+                        )
+                        cr.fill()
+
+
 class TargetSimWindow(_BaseTargetSimWindow):
-    """Core GUI window with ROM/floppy selection and persistent window state."""
+    """Core GUI window with ROM/floppy/VTI selection and persistent state."""
 
     def __init__(self, *args, **kwargs):
         state = load_window_state()
         super().__init__(*args, **kwargs)
+
+        # Extend the core two-profile selector without duplicating its widgets.
+        self.profile.set_model(_core.Gtk.StringList.new(list(PROFILE_LABELS)))
+        try:
+            profile_index = PROFILE_CHOICES.index(self.config.profile)
+        except ValueError:
+            profile_index = 0
+        self.profile.set_selected(profile_index)
 
         settings = _find_settings_box(self)
         if not isinstance(settings, _core.Gtk.Box):
@@ -293,6 +454,18 @@ class TargetSimWindow(_BaseTargetSimWindow):
         settings.insert_child_after(self.dsi_revealer, selector_box)
         settings.insert_child_after(self.fdcplus_revealer, self.dsi_revealer)
 
+        # The VTI display shares the right pane with the normal Console I/O
+        # terminal. Historical VTI software writes directly to its 1 KB memory
+        # window, so this view updates independently of serial console output.
+        self.vti_display = VtiDisplay()
+        self.vti_revealer = _core.Gtk.Revealer()
+        self.vti_revealer.set_transition_type(_core.Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.vti_revealer.set_child(self.vti_display)
+        main_paned = _find_main_paned(self)
+        terminal_box = main_paned.get_end_child() if main_paned is not None else None
+        if isinstance(terminal_box, _core.Gtk.Box):
+            terminal_box.insert_child_after(self.vti_revealer, self.command)
+
         # GTK recommends get/set_default_size() for persistent window sizing;
         # it retains the normal (unmaximized) dimensions as the user resizes.
         self.set_default_size(state.width, state.height)
@@ -316,8 +489,14 @@ class TargetSimWindow(_BaseTargetSimWindow):
         _core.shutil.copy2(source, destination)
         return destination
 
+    def _selected_profile(self) -> str:
+        selected = int(self.profile.get_selected())
+        if 0 <= selected < len(PROFILE_CHOICES):
+            return PROFILE_CHOICES[selected]
+        return PROFILE_TARGET
+
     def _effective_floppy_index(self) -> int:
-        if self.profile.get_selected() == 1:
+        if self._selected_profile() != PROFILE_TARGET:
             return FLOPPY_DSI_INDEX
         return int(self.floppy_controller.get_selected())
 
@@ -331,13 +510,15 @@ class TargetSimWindow(_BaseTargetSimWindow):
         )
 
     def _floppy_changed(self, *_args) -> None:
-        if self.profile.get_selected() == 0:
+        if self._selected_profile() == PROFILE_TARGET:
             self._target_floppy_selection = int(self.floppy_controller.get_selected())
         self._update_floppy_visibility()
         self._controls_changed()
 
     def _current_config(self):
         config = super()._current_config()
+        config.profile = self._selected_profile()
+
         if hasattr(self, "rom_row"):
             config.rom_image = self.rom_row.get_path()
         else:
@@ -368,17 +549,28 @@ class TargetSimWindow(_BaseTargetSimWindow):
             )
         return config
 
-    def _profile_changed(self, *args):
-        result = super()._profile_changed(*args)
-        target_mode = self.profile.get_selected() == 0
+    def _profile_changed(self, *_args):
+        if self.initializing:
+            return
+
+        profile = self._selected_profile()
+        target_mode = profile == PROFILE_TARGET
+
+        self.cf0.set_sensitive(target_mode)
+        self.cf1.set_sensitive(target_mode)
+        self.ide_trace.set_sensitive(target_mode)
+        if target_mode:
+            self.dsi_bootstrap.set_sensitive(True)
+        else:
+            self.dsi_bootstrap.set_active(True)
+            self.dsi_bootstrap.set_sensitive(False)
+
         if hasattr(self, "rom_row"):
             self.rom_row.set_sensitive(target_mode)
 
         if hasattr(self, "floppy_controller"):
             self.floppy_controller.set_sensitive(target_mode)
-            desired = (
-                self._target_floppy_selection if target_mode else FLOPPY_DSI_INDEX
-            )
+            desired = self._target_floppy_selection if target_mode else FLOPPY_DSI_INDEX
             if self.floppy_controller.get_selected() != desired:
                 self.floppy_controller.set_selected(desired)
             self._update_floppy_visibility()
@@ -388,7 +580,11 @@ class TargetSimWindow(_BaseTargetSimWindow):
                 row.set_sensitive(target_mode)
             self.fdcplus_write.set_sensitive(target_mode)
             self.fdcplus_trace.set_sensitive(target_mode)
-        return result
+
+        if hasattr(self, "vti_revealer"):
+            self.vti_revealer.set_reveal_child(profile == PROFILE_DSI_VTI)
+
+        self._controls_changed()
 
     def _capture_window_state(self) -> WindowState:
         width, height = self.get_default_size()
@@ -409,6 +605,8 @@ class TargetSimWindow(_BaseTargetSimWindow):
             save_window_state(self._capture_window_state())
         except OSError:
             pass
+        if hasattr(self, "vti_display"):
+            self.vti_display.shutdown()
         return super()._close_request(*args)
 
 
