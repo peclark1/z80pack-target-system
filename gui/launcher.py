@@ -31,6 +31,8 @@ install_feed_child_string_compat()
 
 PROFILE_TARGET = "target"
 PROFILE_DSI_COMPAT = "dsi-compat"
+PROFILE_DSI_VTI = "dsi-vti"
+PROFILES = {PROFILE_TARGET, PROFILE_DSI_COMPAT, PROFILE_DSI_VTI}
 
 FLOPPY_NONE = "none"
 FLOPPY_DSI = "dsi"
@@ -63,17 +65,18 @@ class LaunchConfig:
     def active_floppy_controller(self) -> str:
         """Return the controller used for this launch.
 
-        DSI compatibility mode is inherently a DSI machine. Target mode uses
-        the explicit GUI selection and never attaches DSI and FDC+ together.
+        Both compatibility profiles are inherently DSI machines. Target mode
+        uses the explicit GUI selection and never attaches DSI and FDC+
+        together.
         """
-        if self.profile == PROFILE_DSI_COMPAT:
+        if self.profile in {PROFILE_DSI_COMPAT, PROFILE_DSI_VTI}:
             return FLOPPY_DSI
         return self.floppy_controller
 
     def validate(self) -> list[str]:
         errors: list[str] = []
 
-        if self.profile not in {PROFILE_TARGET, PROFILE_DSI_COMPAT}:
+        if self.profile not in PROFILES:
             errors.append(f"unknown profile: {self.profile}")
 
         if self.floppy_controller not in FLOPPY_CONTROLLERS:
@@ -122,7 +125,7 @@ class LaunchConfig:
                         f"FDCPLUS{number} must be a 256,256-byte IBM-3740 77x26x128 image"
                     )
 
-        if self.profile == PROFILE_DSI_COMPAT and not self.dsi0:
+        if self.profile in {PROFILE_DSI_COMPAT, PROFILE_DSI_VTI} and not self.dsi0:
             errors.append("DSI compatibility mode requires a DSI0 image")
 
         if self.profile == PROFILE_TARGET:
@@ -144,7 +147,12 @@ class LaunchConfig:
         so DSI and FDC+ cannot accidentally be attached at the same time.
         """
         repo_root = repo_root.resolve()
-        target = "dsi-compat" if self.profile == PROFILE_DSI_COMPAT else "run"
+        if self.profile == PROFILE_DSI_VTI:
+            target = "dsi-vti"
+        elif self.profile == PROFILE_DSI_COMPAT:
+            target = "dsi-compat"
+        else:
+            target = "run"
         argv = ["make", "-C", str(repo_root), target]
         controller = self.active_floppy_controller()
 

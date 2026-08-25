@@ -52,6 +52,15 @@ jobs:
           sudo apt-get install -y build-essential git libx11-dev pasmo
       - name: Build targetsim and boot real target ROM through IDE
         run: make smoke
+      - name: Exercise Polymorphic VTI video RAM and keyboard
+        run: |
+          python3 tools/make_vti_smoke.py build/smoke-vti.dsk
+          python3 tools/run_vti_smoke.py \
+            --targetsim build/z80pack-upstream/targets100sim/targetsim \
+            --config build/z80pack-upstream/targets100sim/conf_3d/dsi-compat.conf \
+            --disk build/smoke-vti.dsk \
+            --screen build/smoke-vti-screen.bin \
+            --keyboard build/smoke-vti-kbd
       - name: Exercise FDC+ Drive Type 8 FD3712 protocol
         run: |
           python3 tools/make_fdcplus_smoke.py \

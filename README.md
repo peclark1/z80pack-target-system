@@ -6,9 +6,9 @@ The goal is not to create a generic CP/M machine. The goal is to run the **same 
 
 ## Current verified status
 
-The emulator boots the **actual target CP/M 3 images** through the actual current 4K monitor ROM and emulated Dual IDE/CF V3 interface. It also includes a software-visible Digital Systems FDC-1 single-density controller model and a separate full-64K compatibility profile for historical DSI systems.
+The emulator boots the **actual target CP/M 3 images** through the actual current 4K monitor ROM and emulated Dual IDE/CF V3 interface. It also includes a software-visible Digital Systems FDC-1 single-density controller model and separate historical compatibility profiles, including a DSI + Polymorphic VTI configuration.
 
-The automated CI smoke tests verify both storage paths.
+The automated CI smoke tests verify the IDE/ROM path, DSI FDC-1 bootstrap/DMA path, FDC+ Type 8 path, and VTI video-memory/keyboard path.
 
 ### Target ROM / IDE path
 
@@ -34,7 +34,20 @@ The automated CI smoke tests verify both storage paths.
 7. poll FDC-1 I/O-finish status;
 8. print `DSI FDC1 OK` through Console I/O.
 
-The generated target machine reports exactly the current target's CPU-visible memory profile: 60K RAM at `0000H-EFFFH`, 4K ROM at `F000H-FFFFH`, POJ/reset at `F000H`, and no additional MMU RAM banks exposed.
+### Polymorphic VTI compatibility path
+
+The VTI is intentionally **not** present in the normal target profile because its 1K video window occupies ordinary CPU address space. The `dsi-vti` profile instead starts from the existing 64K/no-master-ROM DSI compatibility machine and overlays the historical VTI mapping:
+
+- display RAM: `8800H-8BFFH` (64 columns x 16 rows = 1024 bytes);
+- keyboard data: `88H` and mirrored `8AH`;
+- keyboard status: `89H` and mirrored `8BH`;
+- keyboard interrupt: `RST 38H` (`FFH` interrupt acknowledge byte);
+- text cells: bit 7 set, low seven bits ASCII;
+- semigraphics cells: bit 7 clear, six active-low 2x3 pixels.
+
+The GTK front end displays this memory live and accepts keyboard input when the VTI pane has focus. This makes it possible to boot an original DSI single-density system and run software that was written for the Polymorphic video terminal instead of translating its output to the modern serial console.
+
+The generated normal target machine reports exactly the current target's CPU-visible memory profile: 60K RAM at `0000H-EFFFH`, 4K ROM at `F000H-FFFFH`, POJ/reset at `F000H`, and no additional MMU RAM banks exposed.
 
 Real-image validation currently includes:
 
@@ -63,9 +76,10 @@ The v3.1 image therefore recovers **9K of TPA** versus the v3.0 control while re
 - S100Computers Dual IDE/CF V3 at `30H-34H`
 - IMSAI MIO SIO at `42H-43H`
 - Digital Systems FDC-1 single-density interface at `7DH-7FH`
+- Polymorphic Systems VTI at `8800H-8BFFH`, keyboard ports `88H-8BH` (compatibility profile only)
 - S100Computers Serial I/O V3 channel A at `A1H/A3H`
 - IMSAI programmed-input / sense switches at `FFH`
-- Altair-compatible FDC/FDC+ floppy interface planned for separate floppy support
+- Altair FDC+ Drive Type 8 / iCOM 3712-compatible floppy interface
 
 The emulator must conform to the real hardware interface. We do not plan to change ROM or BIOS code merely to make emulation easier.
 
@@ -84,6 +98,8 @@ The first major use case is a CP/M 3 development laboratory. The working loop is
 This makes experiments such as changing `MEMTOP`, buffer placement, allocation vectors, directory hashing, BIOS placement, and driver size much safer and faster than repeated tests on physical media.
 
 The DSI model adds a second use case: historical single-density CP/M images can be exercised against the authentic FDC-1 port/DMA protocol, while a separate 64K compatibility profile distinguishes controller problems from memory-layout conflicts with the target's `F000H-FFFFH` monitor ROM.
+
+The DSI + VTI profile extends that historical environment further: archived software can use the same DSI boot media and the original Polymorphic 64x16 video/keyboard interface together, reproducing the display path used by period applications.
 
 ## Repository layout
 
@@ -142,7 +158,7 @@ The initial upstream baseline is commit:
 - host-side and full-ROM CI regression tests
 - next: automate BIOS/`GENCPM` candidate generation and configuration matrix testing
 
-### M4 - Additional target I/O
+### M4 - Additional target / historical I/O
 
 - MIO SIO subset at `42H/43H` — initial serial mapping implemented
 - Digital Systems FDC-1 SD path at `7DH-7FH` — implemented and regression tested
@@ -153,11 +169,18 @@ The initial upstream baseline is commit:
   - hardware/software bootstrap behavior
   - read-only-by-default archival image handling
   - separate 64K DSI compatibility profile
-- Serial I/O V3 channel A at `A1H/A3H`
+- Polymorphic VTI compatibility path — implemented
+  - 1K memory-mapped 64x16 display at `8800H-8BFFH`
+  - keyboard data/status ports `88H-8BH`
+  - RST 38H keyboard interrupt
+  - text and 2x3 semigraphics rendering
+  - live GTK display and keyboard input
+  - combined DSI + VTI compatibility profile
+- Serial I/O V3 USB FIFO host-link path
 - front-panel console-selection regression tests
-- Altair FDC/FDC+ compatible floppy path
+- Altair FDC+ Type 8 / iCOM 3712-compatible floppy path
 
-Later additions can include VTI, interrupt fidelity, more detailed disk timing, and other cards when software requires them.
+Later additions can include more detailed disk/video timing and other cards when software requires them.
 
 ## Getting started
 
@@ -181,7 +204,7 @@ To convert the logical 4K monitor `.bin` produced by `s100-target-system-4k-mast
 make rom ROM_BIN=/path/to/IMSAI_TARGET_MONITOR_4K.bin
 ```
 
-Or build the pinned current monitor source automatically and run both complete storage smoke tests:
+Or build the pinned current monitor source automatically and run the complete smoke-test set:
 
 ```sh
 make smoke
@@ -242,6 +265,14 @@ For a historical CP/M image that expects all 64K to be RAM, use the isolated com
 make dsi-compat DSI0=/path/to/dsi-sd.img
 ```
 
+To reproduce a DSI system with the Polymorphic VTI installed, use:
+
+```sh
+make dsi-vti DSI0=/path/to/dsi-sd.img
+```
+
+In the GTK front end (`make gui`), choose **DSI + Polymorphic VTI — 63K RAM + 1K video**. The live VTI screen appears above the serial terminal; click the VTI display to give its keyboard focus.
+
 DSI images are read-only by default. Use `DSI_WRITE=1` only with a disposable scratch copy. Enable tracing with `DSI_TRACE=1`.
 
 See `docs/DSI-FDC1.md` for the exact controller interface and compatibility-profile details.
@@ -257,11 +288,3 @@ make test
 ```
 
 See `docs/CPM3-LAB.md` for the verified real-image results and planned GENCPM/TPA test matrix.
-
-## Related project
-
-The firmware source of truth is:
-
-- `peclark1/s100-target-system-4k-master-rom`
-
-Its hardware map and monitor behavior are authoritative for the emulator whenever the two projects overlap.

@@ -24,6 +24,8 @@ FDCPLUS2 ?=
 FDCPLUS3 ?=
 FDCPLUS_TRACE ?= 0
 FDCPLUS_WRITE ?= 0
+VTI_SCREEN ?= build/vti-screen.bin
+VTI_KBD ?= build/vti-kbd
 FP_PORT ?= 00
 FP_FILE ?=
 CPU_MHZ ?= 4
@@ -45,9 +47,11 @@ TARGET_INPUTS := \
 	emulator/srcsim/target-fdcplus-type8.c \
 	emulator/srcsim/target-fdcplus-type8.h \
 	emulator/srcsim/target-serialio-usb.c \
-	emulator/srcsim/target-serialio-usb.h
+	emulator/srcsim/target-serialio-usb.h \
+	emulator/srcsim/target-vti.c \
+	emulator/srcsim/target-vti.h
 
-.PHONY: help bootstrap prepare rom current-rom build run dsi-compat cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-selected-rom smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
+.PHONY: help bootstrap prepare rom current-rom build run dsi-compat dsi-vti cf-work cf-reset lab smoke-cf smoke-dsi-image smoke-ide smoke-selected-rom smoke-dsi smoke test gui gui-deps gui-install gui-uninstall clean
 
 help:
 	@printf '%s\n' \
@@ -66,6 +70,8 @@ help:
 	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
 	  '                                   Preload T0/S1 into 0000H-007FH while retaining target ROM/map' \
 	  'make dsi-compat DSI0=/path/sd.img Run historical DSI image with 64K RAM/no target ROM' \
+	  'make dsi-vti DSI0=/path/sd.img    Run restored DSI/VTI head-test workstation profile' \
+	  '                                   IMSAI SIO console 02H/03H; VTI display F800H-FBFFH' \
 	  'make run DSI0=/path/a.img DSI1=/path/b.img DSI_TRACE=1' \
 	  '                                   Attach/trace two DSI SD drives' \
 	  'make run FDCPLUS0=/path/ibm3740.dsk FDCPLUS_TRACE=1' \
@@ -132,12 +138,15 @@ run:
 		echo '       run make lab CF0_SOURCE=/path/to/reference.img or set DSI0/FDCPLUS0' >&2; \
 		exit 2; \
 	fi
+	TARGET_CONSOLE=cio \
+	TARGET_HEADTEST_ENABLE=0 \
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP="$(DSI_BOOTSTRAP)" \
 	TARGET_FDCPLUS_TRACE="$(FDCPLUS_TRACE)" \
 	TARGET_FDCPLUS_WRITE="$(FDCPLUS_WRITE)" \
+	TARGET_VTI_ENABLE=0 \
 	TARGET_FP_PORT="$(FP_PORT)" \
 	TARGET_FP_FILE="$(FP_FILE)" \
 	sh -c 'if [ -n "$(strip $(CF0))" ] && [ -f "$(abspath $(CF0))" ]; then export TARGET_CF0="$(abspath $(CF0))"; else unset TARGET_CF0; fi; if [ -n "$(strip $(CF1))" ] && [ -f "$(abspath $(CF1))" ]; then export TARGET_CF1="$(abspath $(CF1))"; else unset TARGET_CF1; fi; if [ -n "$(strip $(DSI0))" ] && [ -f "$(abspath $(DSI0))" ]; then export TARGET_DSI0="$(abspath $(DSI0))"; else unset TARGET_DSI0; fi; if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; if [ -n "$(strip $(FDCPLUS0))" ] && [ -f "$(abspath $(FDCPLUS0))" ]; then export TARGET_FDCPLUS0="$(abspath $(FDCPLUS0))"; else unset TARGET_FDCPLUS0; fi; if [ -n "$(strip $(FDCPLUS1))" ] && [ -f "$(abspath $(FDCPLUS1))" ]; then export TARGET_FDCPLUS1="$(abspath $(FDCPLUS1))"; else unset TARGET_FDCPLUS1; fi; if [ -n "$(strip $(FDCPLUS2))" ] && [ -f "$(abspath $(FDCPLUS2))" ]; then export TARGET_FDCPLUS2="$(abspath $(FDCPLUS2))"; else unset TARGET_FDCPLUS2; fi; if [ -n "$(strip $(FDCPLUS3))" ] && [ -f "$(abspath $(FDCPLUS3))" ]; then export TARGET_FDCPLUS3="$(abspath $(FDCPLUS3))"; else unset TARGET_FDCPLUS3; fi; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/system.conf -r "$(if $(strip $(ROM_IMAGE)),$(abspath $(RUN_ROM_DIR)),$(abspath build))"'
@@ -147,13 +156,34 @@ dsi-compat: build
 		echo 'error: set DSI0 to a 256256-byte 77x26x128 single-density image' >&2; \
 		exit 2; \
 	fi
+	TARGET_CONSOLE=cio \
+	TARGET_HEADTEST_ENABLE=0 \
 	TARGET_DSI0="$(abspath $(DSI0))" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP=1 \
+	TARGET_VTI_ENABLE=0 \
 	TARGET_FP_PORT="$(FP_PORT)" \
 	TARGET_FP_FILE="$(FP_FILE)" \
 	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/dsi-compat.conf'
+
+dsi-vti: build
+	@if [ -z "$(strip $(DSI0))" ] || [ ! -f "$(abspath $(DSI0))" ]; then \
+		echo 'error: set DSI0 to a 256256-byte 77x26x128 single-density image' >&2; \
+		exit 2; \
+	fi
+	@mkdir -p "$(dir $(VTI_SCREEN))"
+	TARGET_CONSOLE=sio \
+	TARGET_HEADTEST_ENABLE=1 \
+	TARGET_DSI0="$(abspath $(DSI0))" \
+	TARGET_DSI_TRACE="$(DSI_TRACE)" \
+	TARGET_DSI_WRITE="$(DSI_WRITE)" \
+	TARGET_DSI_BOOTSTRAP=1 \
+	TARGET_VTI_ENABLE=1 \
+	TARGET_VTI_SCREEN="$(abspath $(VTI_SCREEN))" \
+	TARGET_FP_PORT="$(FP_PORT)" \
+	TARGET_FP_FILE="$(FP_FILE)" \
+	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1 TARGET_FDCPLUS0 TARGET_FDCPLUS1 TARGET_FDCPLUS2 TARGET_FDCPLUS3; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/dsi-compat.conf'
 
 cf-work:
 	@if [ -z "$(CF0_SOURCE)" ]; then \

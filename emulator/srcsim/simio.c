@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "sim.h"
@@ -24,6 +25,7 @@
 #include "target-dsi-fdc1.h"
 #include "target-fdcplus-type8.h"
 #include "target-serialio-usb.h"
+#include "target-vti.h"
 
 /* The upstream IMSAI HAL expects the machine layer to supply the connector
  * array declared by simio.h. SIO2A uses element zero for the MIO socket.
@@ -35,6 +37,129 @@ unix_connector_t ucons[NUMUSOC];
  * continue to use TARGET_FP_PORT exactly as before when no file is supplied.
  */
 static char *front_panel_value_file;
+
+/* The modern target uses Console I/O V2 at 00H/01H. The restored historical
+ * DSI/VTI workstation instead used the native IMSAI SIO channel A at 02H/03H,
+ * with the SIO control register at 08H. TARGET_CONSOLE=sio selects that map.
+ */
+static int use_imsai_sio_console;
+
+/*
+ * Historical disk-head tester compatibility layer.
+ *
+ * The surviving BASIC suite establishes the interface much more precisely
+ * than any surviving hardware documentation:
+ *
+ *   E0H-EBH  actuator, erase/write-current and test-control registers
+ *   E8H      left status latch when read
+ *   E9H      right status latch when read
+ *   EEH-EFH  12-bit A/D converter
+ *   FFH      IMSAI sense switches (handled separately below)
+ *
+ * Ports 02H/03H are NOT part of the fixture: surviving VID.HEX uses exactly
+ * the normal IMSAI SIO handshake there (IN 03H transmitter-ready, OUT 02H
+ * character). This matches the original workstation's printing terminal /
+ * Teletype serving as both console and hard-copy output.
+ *
+ * This is intentionally a cooperative fixture model, not a magnetic-physics
+ * simulator. It acknowledges moves/writes as complete and supplies repeatable
+ * A/D readings for a healthy virtual head. The original BASIC program still
+ * performs all amplitude, resolution, overwrite and pass/fail calculations.
+ *
+ * TARGET_HEADTEST_ENABLE can explicitly control the layer. If it is omitted,
+ * the historical DSI+VTI profile enables it together with TARGET_VTI_ENABLE.
+ */
+static int headtester_enabled;
+static BYTE headtester_regs[12];
+
+static int env_flag(const char *name, int fallback)
+{
+    const char *value = getenv(name);
+
+    if (value == NULL || *value == '\0')
+        return fallback;
+    return strcmp(value, "0") != 0 && strcasecmp(value, "false") != 0 &&
+           strcasecmp(value, "no") != 0;
+}
+
+static void headtester_reset(void)
+{
+    memset(headtester_regs, 0, sizeof(headtester_regs));
+}
+
+static void headtester_init(void)
+{
+    headtester_enabled = env_flag(
+        "TARGET_HEADTEST_ENABLE", env_flag("TARGET_VTI_ENABLE", 0));
+    headtester_reset();
+}
+
+static void headtester_exit(void)
+{
+    headtester_enabled = 0;
+}
+
+#define HEADTEST_OUT_FN(name, port) \
+    static void name(BYTE data) \
+    { \
+        if (headtester_enabled) \
+            headtester_regs[(port) - 0xe0] = data; \
+    }
+
+HEADTEST_OUT_FN(headtester_e0_out, 0xe0)
+HEADTEST_OUT_FN(headtester_e1_out, 0xe1)
+HEADTEST_OUT_FN(headtester_e2_out, 0xe2)
+HEADTEST_OUT_FN(headtester_e3_out, 0xe3)
+HEADTEST_OUT_FN(headtester_e4_out, 0xe4)
+HEADTEST_OUT_FN(headtester_e5_out, 0xe5)
+HEADTEST_OUT_FN(headtester_e6_out, 0xe6)
+HEADTEST_OUT_FN(headtester_e7_out, 0xe7)
+HEADTEST_OUT_FN(headtester_e8_out, 0xe8)
+HEADTEST_OUT_FN(headtester_e9_out, 0xe9)
+HEADTEST_OUT_FN(headtester_ea_out, 0xea)
+HEADTEST_OUT_FN(headtester_eb_out, 0xeb)
+
+static BYTE headtester_left_status_in(void)
+{
+    /* TEST.BAS accepts 01H or 0BH for actuator completion and specifically
+     * waits for 0BH after write operations. Always-ready 0BH exercises the
+     * complete original state machine without adding arbitrary timing.
+     */
+    return headtester_enabled ? 0x0b : 0xff;
+}
+
+static BYTE headtester_right_status_in(void)
+{
+    return headtester_enabled ? 0x0b : 0xff;
+}
+
+static unsigned headtester_adc_value(void)
+{
+    BYTE control;
+
+    if (!headtester_enabled)
+        return 0x0fff;
+
+    control = headtester_regs[0xe8 - 0xe0];
+
+    /* RRGHT is bit 6 in TEST.BAS. The right read channel is used for the
+     * overwrite measurement; 4050 produces a believable low-40-dB overwrite
+     * result. Normal left-channel reads use 3800, which produces amplitudes
+     * and 1F/2F resolution ratios comfortably inside INFO.LVL's limits while
+     * still letting the BASIC code perform every calculation itself.
+     */
+    return (control & 0x40) ? 4050u : 3800u;
+}
+
+static BYTE headtester_adc_high_in(void)
+{
+    return (BYTE) ((headtester_adc_value() >> 8) & 0x0f);
+}
+
+static BYTE headtester_adc_low_in(void)
+{
+    return (BYTE) (headtester_adc_value() & 0xff);
+}
 
 /* Console I/O V2 uses different ready-bit positions than the IMSAI SIO
  * terminal backend we reuse. SIO1A reports TX=bit0/RX=bit1; the Console I/O
@@ -59,7 +184,7 @@ static BYTE console_io_status_in(void)
  * interrupt/abort behavior. Setting the normal z80pack USERINT state lets
  * run_cpu() unwind through mon(), which in turn restores the UNIX terminal.
  */
-static BYTE console_io_data_in(void)
+static BYTE terminal_data_in(void)
 {
     BYTE data = imsai_sio1a_data_in();
 
@@ -70,6 +195,66 @@ static BYTE console_io_data_in(void)
     }
 
     return data;
+}
+
+/* Runtime-dispatched low ports let one targetsim binary represent both the
+ * current target and the historically accurate DSI/VTI workstation.
+ */
+static BYTE target_port00_in(void)
+{
+    return use_imsai_sio_console ? 0xff : console_io_status_in();
+}
+
+static BYTE target_port01_in(void)
+{
+    return use_imsai_sio_console ? 0xff : terminal_data_in();
+}
+
+static void target_port01_out(BYTE data)
+{
+    if (!use_imsai_sio_console)
+        imsai_sio1a_data_out(data);
+}
+
+static BYTE target_port02_in(void)
+{
+    return use_imsai_sio_console ? terminal_data_in() : 0xff;
+}
+
+static void target_port02_out(BYTE data)
+{
+    if (use_imsai_sio_console)
+        imsai_sio1a_data_out(data);
+}
+
+static BYTE target_port03_in(void)
+{
+    return use_imsai_sio_console ? imsai_sio1a_status_in() : 0xff;
+}
+
+static void target_port03_out(BYTE data)
+{
+    if (use_imsai_sio_console)
+        imsai_sio1a_status_out(data);
+}
+
+/* Port 08H is FDC+ command/status in the modern target, but it is the IMSAI
+ * SIO control register in the historical workstation. The two hardware
+ * profiles are mutually exclusive, so runtime dispatch is unambiguous.
+ */
+static BYTE target_port08_in(void)
+{
+    return use_imsai_sio_console
+        ? imsai_sio1_ctl_in()
+        : target_fdcplus_type8_status_data_in();
+}
+
+static void target_port08_out(BYTE data)
+{
+    if (use_imsai_sio_console)
+        imsai_sio1_ctl_out(data);
+    else
+        target_fdcplus_type8_command_out(data);
 }
 
 static void refresh_front_panel_from_file(void)
@@ -110,8 +295,13 @@ static void apply_runtime_overrides(void)
 {
     const char *value = getenv("TARGET_FP_PORT");
     const char *file = getenv("TARGET_FP_FILE");
+    const char *console = getenv("TARGET_CONSOLE");
     char *end = NULL;
     long parsed;
+
+    use_imsai_sio_console = console != NULL &&
+        (strcasecmp(console, "sio") == 0 ||
+         strcasecmp(console, "imsai-sio") == 0);
 
     free(front_panel_value_file);
     front_panel_value_file = NULL;
@@ -145,11 +335,13 @@ void lpt_reset(void)
  * (FFH) for IN and ignores OUT unless I/O trapping is explicitly enabled.
  */
 in_func_t *const port_in[256] = {
-    [0x00] = console_io_status_in,
-    [0x01] = console_io_data_in,
+    [0x00] = target_port00_in,
+    [0x01] = target_port01_in,
+    [0x02] = target_port02_in,
+    [0x03] = target_port03_in,
 
-    /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
-    [0x08] = target_fdcplus_type8_status_data_in,
+    /* 08H is runtime-dispatched between IMSAI SIO control and FDC+ status. */
+    [0x08] = target_port08_in,
     [0x0a] = target_fdcplus_type8_port0a_in,
     [0x0b] = target_fdcplus_type8_port0b_in,
 
@@ -168,6 +360,12 @@ in_func_t *const port_in[256] = {
     [0x7e] = target_dsi_fdc1_bootstrap_in,
     [0x7f] = target_dsi_fdc1_status_in,
 
+    /* Original disk-head test fixture status and A/D converter. */
+    [0xe8] = headtester_left_status_in,
+    [0xe9] = headtester_right_status_in,
+    [0xee] = headtester_adc_high_in,
+    [0xef] = headtester_adc_low_in,
+
     /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
     [0xaa] = target_serialio_usb_status_in,
     [0xac] = target_serialio_usb_data_in,
@@ -176,10 +374,12 @@ in_func_t *const port_in[256] = {
 };
 
 out_func_t *const port_out[256] = {
-    [0x01] = imsai_sio1a_data_out,
+    [0x01] = target_port01_out,
+    [0x02] = target_port02_out,
+    [0x03] = target_port03_out,
 
-    /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
-    [0x08] = target_fdcplus_type8_command_out,
+    /* 08H is runtime-dispatched between IMSAI SIO control and FDC+ command. */
+    [0x08] = target_port08_out,
     [0x09] = target_fdcplus_type8_data_out,
     [0x0a] = target_fdcplus_type8_port0a_out,
     [0x0b] = target_fdcplus_type8_port0b_out,
@@ -199,6 +399,20 @@ out_func_t *const port_out[256] = {
     [0x7e] = target_dsi_fdc1_dma_high_out,
     [0x7f] = target_dsi_fdc1_command_out,
 
+    /* Original disk-head test fixture outputs. */
+    [0xe0] = headtester_e0_out,
+    [0xe1] = headtester_e1_out,
+    [0xe2] = headtester_e2_out,
+    [0xe3] = headtester_e3_out,
+    [0xe4] = headtester_e4_out,
+    [0xe5] = headtester_e5_out,
+    [0xe6] = headtester_e6_out,
+    [0xe7] = headtester_e7_out,
+    [0xe8] = headtester_e8_out,
+    [0xe9] = headtester_e9_out,
+    [0xea] = headtester_ea_out,
+    [0xeb] = headtester_eb_out,
+
     /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
     [0xac] = target_serialio_usb_data_out,
 
@@ -214,6 +428,8 @@ void init_io(void)
     target_dsi_fdc1_init();
     target_fdcplus_type8_init();
     target_serialio_usb_init();
+    target_vti_init();
+    headtester_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -226,12 +442,16 @@ void reset_io(void)
     target_dsi_fdc1_reset();
     target_fdcplus_type8_reset();
     target_serialio_usb_reset();
+    target_vti_reset();
+    headtester_reset();
 }
 
 void exit_io(void)
 {
     int i;
 
+    headtester_exit();
+    target_vti_exit();
     target_serialio_usb_exit();
     target_fdcplus_type8_exit();
     target_dsi_fdc1_exit();
