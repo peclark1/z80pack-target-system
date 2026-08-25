@@ -41,6 +41,7 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path) -> str:
     screen.unlink(missing_ok=True)
 
     env = os.environ.copy()
+    env["TARGET_CONSOLE"] = "sio"
     env["TARGET_DSI0"] = str(disk.resolve())
     env["TARGET_DSI_TRACE"] = "0"
     env["TARGET_DSI_WRITE"] = "0"
@@ -52,6 +53,10 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path) -> str:
     env.pop("TARGET_DSI1", None)
     env.pop("TARGET_CF0", None)
     env.pop("TARGET_CF1", None)
+    env.pop("TARGET_FDCPLUS0", None)
+    env.pop("TARGET_FDCPLUS1", None)
+    env.pop("TARGET_FDCPLUS2", None)
+    env.pop("TARGET_FDCPLUS3", None)
 
     read_fd, write_fd = os.pipe()
     read_file = os.fdopen(read_fd, "rb", buffering=0)
@@ -129,7 +134,7 @@ def main() -> None:
         )
         raise SystemExit(1)
 
-    print("workstation smoke test passed: VTI mapping and head-tester I/O are working")
+    print("workstation smoke test passed: native IMSAI SIO, VTI mapping, and head-tester I/O are working")
 
 
 if __name__ == "__main__":
