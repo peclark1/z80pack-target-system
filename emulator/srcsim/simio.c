@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "sim.h"
@@ -36,6 +37,168 @@ unix_connector_t ucons[NUMUSOC];
  * continue to use TARGET_FP_PORT exactly as before when no file is supplied.
  */
 static char *front_panel_value_file;
+
+/*
+ * Historical disk-head tester compatibility layer.
+ *
+ * The surviving BASIC suite establishes the interface much more precisely
+ * than any surviving hardware documentation:
+ *
+ *   02H      redirected printer data (VID.HEX Ctrl-A/Ctrl-B path)
+ *   03H      printer-ready / TEST.BAS request-monitor status
+ *   E0H-EBH  actuator, erase/write-current and test-control registers
+ *   E8H      left status latch when read
+ *   E9H      right status latch when read
+ *   EEH-EFH  12-bit A/D converter
+ *   FFH      IMSAI sense switches (handled separately below)
+ *
+ * This is intentionally a cooperative fixture model, not a magnetic-physics
+ * simulator. It acknowledges moves/writes as complete and supplies repeatable
+ * A/D readings for a healthy virtual head. The original BASIC program still
+ * performs all amplitude, resolution, overwrite and pass/fail calculations.
+ *
+ * TARGET_HEADTEST_ENABLE can explicitly control the layer. If it is omitted,
+ * the historical DSI+VTI profile enables it together with TARGET_VTI_ENABLE.
+ */
+static int headtester_enabled;
+static BYTE headtester_regs[12];
+static FILE *headtester_printer;
+static char headtester_printer_path[512];
+
+static int env_flag(const char *name, int fallback)
+{
+    const char *value = getenv(name);
+
+    if (value == NULL || *value == '\0')
+        return fallback;
+    return strcmp(value, "0") != 0 && strcasecmp(value, "false") != 0 &&
+           strcasecmp(value, "no") != 0;
+}
+
+static void headtester_reset(void)
+{
+    memset(headtester_regs, 0, sizeof(headtester_regs));
+}
+
+static void headtester_init(void)
+{
+    const char *configured;
+
+    headtester_enabled = env_flag(
+        "TARGET_HEADTEST_ENABLE", env_flag("TARGET_VTI_ENABLE", 0));
+    headtester_reset();
+    if (!headtester_enabled)
+        return;
+
+    configured = getenv("TARGET_HEADTEST_PRINTER");
+    if (configured != NULL && *configured != '\0') {
+        snprintf(headtester_printer_path, sizeof(headtester_printer_path),
+                 "%s", configured);
+    } else {
+        snprintf(headtester_printer_path, sizeof(headtester_printer_path),
+                 "/tmp/targets100sim-headtester-printer-%lu.txt",
+                 (unsigned long) getuid());
+    }
+
+    headtester_printer = fopen(headtester_printer_path, "wb");
+    if (headtester_printer == NULL) {
+        fprintf(stderr, "headtester: cannot open printer capture %s\n",
+                headtester_printer_path);
+    } else {
+        fprintf(stderr, "headtester: printer capture %s\n",
+                headtester_printer_path);
+    }
+}
+
+static void headtester_exit(void)
+{
+    if (headtester_printer != NULL) {
+        fflush(headtester_printer);
+        fclose(headtester_printer);
+        headtester_printer = NULL;
+    }
+    headtester_enabled = 0;
+}
+
+static void headtester_printer_out(BYTE data)
+{
+    if (!headtester_enabled || headtester_printer == NULL)
+        return;
+
+    fputc(data, headtester_printer);
+    fflush(headtester_printer);
+}
+
+static BYTE headtester_ready_in(void)
+{
+    /* VID.HEX waits for D0=1 before OUT 02H. TEST.BAS only takes its manual
+     * request path when this port reads FFH, so 01H is the normal idle/ready
+     * state for both surviving uses.
+     */
+    return headtester_enabled ? 0x01 : 0xff;
+}
+
+#define HEADTEST_OUT_FN(name, port) \
+    static void name(BYTE data) \
+    { \
+        if (headtester_enabled) \
+            headtester_regs[(port) - 0xe0] = data; \
+    }
+
+HEADTEST_OUT_FN(headtester_e0_out, 0xe0)
+HEADTEST_OUT_FN(headtester_e1_out, 0xe1)
+HEADTEST_OUT_FN(headtester_e2_out, 0xe2)
+HEADTEST_OUT_FN(headtester_e3_out, 0xe3)
+HEADTEST_OUT_FN(headtester_e4_out, 0xe4)
+HEADTEST_OUT_FN(headtester_e5_out, 0xe5)
+HEADTEST_OUT_FN(headtester_e6_out, 0xe6)
+HEADTEST_OUT_FN(headtester_e7_out, 0xe7)
+HEADTEST_OUT_FN(headtester_e8_out, 0xe8)
+HEADTEST_OUT_FN(headtester_e9_out, 0xe9)
+HEADTEST_OUT_FN(headtester_ea_out, 0xea)
+HEADTEST_OUT_FN(headtester_eb_out, 0xeb)
+
+static BYTE headtester_left_status_in(void)
+{
+    /* TEST.BAS accepts 01H or 0BH for actuator completion and specifically
+     * waits for 0BH after write operations. Always-ready 0BH exercises the
+     * complete original state machine without adding arbitrary timing.
+     */
+    return headtester_enabled ? 0x0b : 0xff;
+}
+
+static BYTE headtester_right_status_in(void)
+{
+    return headtester_enabled ? 0x0b : 0xff;
+}
+
+static unsigned headtester_adc_value(void)
+{
+    BYTE control;
+
+    if (!headtester_enabled)
+        return 0x0fff;
+
+    control = headtester_regs[0xe8 - 0xe0];
+
+    /* RRGHT is bit 6 in TEST.BAS. The right read channel is used for the
+     * overwrite measurement; 4050 produces a believable low-40-dB overwrite
+     * result. Normal left-channel reads use 3800, which produces amplitudes
+     * and 1F/2F resolution ratios comfortably inside INFO.LVL's limits while
+     * still letting the BASIC code perform every calculation itself.
+     */
+    return (control & 0x40) ? 4050u : 3800u;
+}
+
+static BYTE headtester_adc_high_in(void)
+{
+    return (BYTE) ((headtester_adc_value() >> 8) & 0x0f);
+}
+
+static BYTE headtester_adc_low_in(void)
+{
+    return (BYTE) (headtester_adc_value() & 0xff);
+}
 
 /* Console I/O V2 uses different ready-bit positions than the IMSAI SIO
  * terminal backend we reuse. SIO1A reports TX=bit0/RX=bit1; the Console I/O
@@ -149,6 +312,9 @@ in_func_t *const port_in[256] = {
     [0x00] = console_io_status_in,
     [0x01] = console_io_data_in,
 
+    /* Surviving VID.HEX uses 02H/03H as its redirected printer interface. */
+    [0x03] = headtester_ready_in,
+
     /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
     [0x08] = target_fdcplus_type8_status_data_in,
     [0x0a] = target_fdcplus_type8_port0a_in,
@@ -169,14 +335,11 @@ in_func_t *const port_in[256] = {
     [0x7e] = target_dsi_fdc1_bootstrap_in,
     [0x7f] = target_dsi_fdc1_status_in,
 
-    /* Polymorphic VTI at 8800H-8BFFH. Even ports return keyboard data;
-     * odd ports return keyboard status. The duplicate 8A/8B pair reflects
-     * the VTI's partial address decoding.
-     */
-    [0x88] = target_vti_keyboard_data_in,
-    [0x89] = target_vti_keyboard_status_in,
-    [0x8a] = target_vti_keyboard_data_in,
-    [0x8b] = target_vti_keyboard_status_in,
+    /* Original disk-head test fixture status and A/D converter. */
+    [0xe8] = headtester_left_status_in,
+    [0xe9] = headtester_right_status_in,
+    [0xee] = headtester_adc_high_in,
+    [0xef] = headtester_adc_low_in,
 
     /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
     [0xaa] = target_serialio_usb_status_in,
@@ -187,6 +350,7 @@ in_func_t *const port_in[256] = {
 
 out_func_t *const port_out[256] = {
     [0x01] = imsai_sio1a_data_out,
+    [0x02] = headtester_printer_out,
 
     /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
     [0x08] = target_fdcplus_type8_command_out,
@@ -209,6 +373,20 @@ out_func_t *const port_out[256] = {
     [0x7e] = target_dsi_fdc1_dma_high_out,
     [0x7f] = target_dsi_fdc1_command_out,
 
+    /* Original disk-head test fixture outputs. */
+    [0xe0] = headtester_e0_out,
+    [0xe1] = headtester_e1_out,
+    [0xe2] = headtester_e2_out,
+    [0xe3] = headtester_e3_out,
+    [0xe4] = headtester_e4_out,
+    [0xe5] = headtester_e5_out,
+    [0xe6] = headtester_e6_out,
+    [0xe7] = headtester_e7_out,
+    [0xe8] = headtester_e8_out,
+    [0xe9] = headtester_e9_out,
+    [0xea] = headtester_ea_out,
+    [0xeb] = headtester_eb_out,
+
     /* Serial I/O V3 DLP-USB245R FIFO used by HOST.COM. */
     [0xac] = target_serialio_usb_data_out,
 
@@ -225,6 +403,7 @@ void init_io(void)
     target_fdcplus_type8_init();
     target_serialio_usb_init();
     target_vti_init();
+    headtester_init();
 
     /* SIO2A/MIO backend: a local UNIX-domain socket. */
     init_unix_server_socket(&ucons[0], "targets100sim.mio");
@@ -238,12 +417,14 @@ void reset_io(void)
     target_fdcplus_type8_reset();
     target_serialio_usb_reset();
     target_vti_reset();
+    headtester_reset();
 }
 
 void exit_io(void)
 {
     int i;
 
+    headtester_exit();
     target_vti_exit();
     target_serialio_usb_exit();
     target_fdcplus_type8_exit();
