@@ -70,8 +70,8 @@ help:
 	  'make run DSI0=/path/sd.img DSI_BOOTSTRAP=1' \
 	  '                                   Preload T0/S1 into 0000H-007FH while retaining target ROM/map' \
 	  'make dsi-compat DSI0=/path/sd.img Run historical DSI image with 64K RAM/no target ROM' \
-	  'make dsi-vti DSI0=/path/sd.img    Run historical DSI image with Polymorphic VTI at 8800H' \
-	  '                                   VTI display is 64x16; keyboard ports are 88H-8BH' \
+	  'make dsi-vti DSI0=/path/sd.img    Run restored DSI/VTI head-test workstation profile' \
+	  '                                   IMSAI SIO console 02H/03H; VTI display F800H-FBFFH' \
 	  'make run DSI0=/path/a.img DSI1=/path/b.img DSI_TRACE=1' \
 	  '                                   Attach/trace two DSI SD drives' \
 	  'make run FDCPLUS0=/path/ibm3740.dsk FDCPLUS_TRACE=1' \
@@ -138,6 +138,8 @@ run:
 		echo '       run make lab CF0_SOURCE=/path/to/reference.img or set DSI0/FDCPLUS0' >&2; \
 		exit 2; \
 	fi
+	TARGET_CONSOLE=cio \
+	TARGET_HEADTEST_ENABLE=0 \
 	TARGET_IDE_TRACE="$(IDE_TRACE)" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
@@ -154,6 +156,8 @@ dsi-compat: build
 		echo 'error: set DSI0 to a 256256-byte 77x26x128 single-density image' >&2; \
 		exit 2; \
 	fi
+	TARGET_CONSOLE=cio \
+	TARGET_HEADTEST_ENABLE=0 \
 	TARGET_DSI0="$(abspath $(DSI0))" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
@@ -168,17 +172,18 @@ dsi-vti: build
 		echo 'error: set DSI0 to a 256256-byte 77x26x128 single-density image' >&2; \
 		exit 2; \
 	fi
-	@mkdir -p "$(dir $(VTI_SCREEN))" "$(dir $(VTI_KBD))"
+	@mkdir -p "$(dir $(VTI_SCREEN))"
+	TARGET_CONSOLE=sio \
+	TARGET_HEADTEST_ENABLE=1 \
 	TARGET_DSI0="$(abspath $(DSI0))" \
 	TARGET_DSI_TRACE="$(DSI_TRACE)" \
 	TARGET_DSI_WRITE="$(DSI_WRITE)" \
 	TARGET_DSI_BOOTSTRAP=1 \
 	TARGET_VTI_ENABLE=1 \
 	TARGET_VTI_SCREEN="$(abspath $(VTI_SCREEN))" \
-	TARGET_VTI_KBD="$(abspath $(VTI_KBD))" \
 	TARGET_FP_PORT="$(FP_PORT)" \
 	TARGET_FP_FILE="$(FP_FILE)" \
-	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/dsi-compat.conf'
+	sh -c 'if [ -n "$(strip $(DSI1))" ] && [ -f "$(abspath $(DSI1))" ]; then export TARGET_DSI1="$(abspath $(DSI1))"; else unset TARGET_DSI1; fi; unset TARGET_CF0 TARGET_CF1 TARGET_FDCPLUS0 TARGET_FDCPLUS1 TARGET_FDCPLUS2 TARGET_FDCPLUS3; cd "$(TARGET_DIR)" && exec ./targetsim -z -f "$(CPU_MHZ)" -c conf_3d/dsi-compat.conf'
 
 cf-work:
 	@if [ -z "$(CF0_SOURCE)" ]; then \
