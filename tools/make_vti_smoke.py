@@ -22,11 +22,11 @@ BOOTSTRAP = bytes.fromhex(
     "36d423"            # MVI M,D4 ('T'|80H) / INX H
     "36c923"            # MVI M,C9 ('I'|80H) / INX H
     "36a023"            # MVI M,A0 (space) / INX H
-    "db89e601c20f00"    # wait: IN 89 / ANI 01 / JNZ wait
+    "db89e601c20f00"    # wait: IN 89 / ANI 01 / JNZ wait (000FH)
     "db88f68077"        # IN 88 / ORI 80 / MOV M,A
-    "212500"            # LXI H,message
+    "212a00"            # LXI H,message (002AH)
     "060c"              # MVI B,12
-    "7ed3012305c21e00"  # loop: MOV A,M / OUT 01 / INX H / DCR B / JNZ loop
+    "7ed3012305c22000"  # loop: MOV A,M / OUT 01 / INX H / DCR B / JNZ 0020H
     "f376"              # DI / HLT
     "565449204b4244204f4b0d0a"  # "VTI KBD OK\r\n"
 )
