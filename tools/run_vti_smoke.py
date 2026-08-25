@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the synthetic DSI/VTI image and verify display-memory mapping."""
+"""Boot the synthetic DSI workstation image and verify VTI/head-tester I/O."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-SUCCESS_TEXT = "VTI DISPLAY OK"
+SUCCESS_TEXT = "VTI HEADTEST OK"
 EXPECTED_SCREEN = bytes.fromhex("d6d4c9a0")  # "VTI " with VTI character bit set
 
 
@@ -46,7 +46,7 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path) -> str:
     env["TARGET_DSI_WRITE"] = "0"
     env["TARGET_DSI_BOOTSTRAP"] = "1"
     env["TARGET_VTI_ENABLE"] = "1"
-    env["TARGET_HEADTEST_ENABLE"] = "0"
+    env["TARGET_HEADTEST_ENABLE"] = "1"
     env["TARGET_VTI_SCREEN"] = str(screen.resolve())
     env.pop("TARGET_VTI_KBD", None)
     env.pop("TARGET_DSI1", None)
@@ -80,7 +80,7 @@ def run(targetsim: Path, config: Path, disk: Path, screen: Path) -> str:
             proc.kill()
             output, _ = proc.communicate()
             text = output.decode("utf-8", errors="replace")
-            raise RuntimeError("VTI smoke test timed out\n" + text)
+            raise RuntimeError("workstation smoke test timed out\n" + text)
     finally:
         try:
             read_file.close()
@@ -97,8 +97,7 @@ def main() -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--disk", required=True, type=Path)
     parser.add_argument("--screen", required=True, type=Path)
-    # Kept as an ignored compatibility argument so existing CI invocations do
-    # not have to care that the restored workstation VTI is display-only.
+    # Retained as an ignored compatibility argument for the existing CI call.
     parser.add_argument("--keyboard", type=Path)
     args = parser.parse_args()
 
@@ -110,27 +109,27 @@ def main() -> None:
 
     print(output, end="")
     if SUCCESS_TEXT not in output:
-        print(f"VTI smoke test failed; missing console output {SUCCESS_TEXT!r}", file=sys.stderr)
+        print(f"workstation smoke test failed; missing console output {SUCCESS_TEXT!r}", file=sys.stderr)
         raise SystemExit(1)
 
     try:
         screen = args.screen.read_bytes()
     except OSError as exc:
-        print(f"VTI smoke test failed; cannot read screen file: {exc}", file=sys.stderr)
+        print(f"workstation smoke test failed; cannot read screen file: {exc}", file=sys.stderr)
         raise SystemExit(1)
 
     if len(screen) != 1024:
-        print(f"VTI smoke test failed; screen file is {len(screen)} bytes, expected 1024", file=sys.stderr)
+        print(f"workstation smoke test failed; screen file is {len(screen)} bytes, expected 1024", file=sys.stderr)
         raise SystemExit(1)
     if screen[: len(EXPECTED_SCREEN)] != EXPECTED_SCREEN:
         print(
-            "VTI smoke test failed; first cells are "
+            "workstation smoke test failed; first VTI cells are "
             f"{screen[:len(EXPECTED_SCREEN)].hex()}, expected {EXPECTED_SCREEN.hex()}",
             file=sys.stderr,
         )
         raise SystemExit(1)
 
-    print("VTI smoke test passed: F800H display RAM mapping is working")
+    print("workstation smoke test passed: VTI mapping and head-tester I/O are working")
 
 
 if __name__ == "__main__":
