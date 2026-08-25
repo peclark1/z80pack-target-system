@@ -38,19 +38,28 @@ unix_connector_t ucons[NUMUSOC];
  */
 static char *front_panel_value_file;
 
+/* The modern target uses Console I/O V2 at 00H/01H. The restored historical
+ * DSI/VTI workstation instead used the native IMSAI SIO channel A at 02H/03H,
+ * with the SIO control register at 08H. TARGET_CONSOLE=sio selects that map.
+ */
+static int use_imsai_sio_console;
+
 /*
  * Historical disk-head tester compatibility layer.
  *
  * The surviving BASIC suite establishes the interface much more precisely
  * than any surviving hardware documentation:
  *
- *   02H      redirected printer data (VID.HEX Ctrl-A/Ctrl-B path)
- *   03H      printer-ready / TEST.BAS request-monitor status
  *   E0H-EBH  actuator, erase/write-current and test-control registers
  *   E8H      left status latch when read
  *   E9H      right status latch when read
  *   EEH-EFH  12-bit A/D converter
  *   FFH      IMSAI sense switches (handled separately below)
+ *
+ * Ports 02H/03H are NOT part of the fixture: surviving VID.HEX uses exactly
+ * the normal IMSAI SIO handshake there (IN 03H transmitter-ready, OUT 02H
+ * character). This matches the original workstation's printing terminal /
+ * Teletype serving as both console and hard-copy output.
  *
  * This is intentionally a cooperative fixture model, not a magnetic-physics
  * simulator. It acknowledges moves/writes as complete and supplies repeatable
@@ -62,8 +71,6 @@ static char *front_panel_value_file;
  */
 static int headtester_enabled;
 static BYTE headtester_regs[12];
-static FILE *headtester_printer;
-static char headtester_printer_path[512];
 
 static int env_flag(const char *name, int fallback)
 {
@@ -82,60 +89,14 @@ static void headtester_reset(void)
 
 static void headtester_init(void)
 {
-    const char *configured;
-
     headtester_enabled = env_flag(
         "TARGET_HEADTEST_ENABLE", env_flag("TARGET_VTI_ENABLE", 0));
     headtester_reset();
-    if (!headtester_enabled)
-        return;
-
-    configured = getenv("TARGET_HEADTEST_PRINTER");
-    if (configured != NULL && *configured != '\0') {
-        snprintf(headtester_printer_path, sizeof(headtester_printer_path),
-                 "%s", configured);
-    } else {
-        snprintf(headtester_printer_path, sizeof(headtester_printer_path),
-                 "/tmp/targets100sim-headtester-printer-%lu.txt",
-                 (unsigned long) getuid());
-    }
-
-    headtester_printer = fopen(headtester_printer_path, "wb");
-    if (headtester_printer == NULL) {
-        fprintf(stderr, "headtester: cannot open printer capture %s\n",
-                headtester_printer_path);
-    } else {
-        fprintf(stderr, "headtester: printer capture %s\n",
-                headtester_printer_path);
-    }
 }
 
 static void headtester_exit(void)
 {
-    if (headtester_printer != NULL) {
-        fflush(headtester_printer);
-        fclose(headtester_printer);
-        headtester_printer = NULL;
-    }
     headtester_enabled = 0;
-}
-
-static void headtester_printer_out(BYTE data)
-{
-    if (!headtester_enabled || headtester_printer == NULL)
-        return;
-
-    fputc(data, headtester_printer);
-    fflush(headtester_printer);
-}
-
-static BYTE headtester_ready_in(void)
-{
-    /* VID.HEX waits for D0=1 before OUT 02H. TEST.BAS only takes its manual
-     * request path when this port reads FFH, so 01H is the normal idle/ready
-     * state for both surviving uses.
-     */
-    return headtester_enabled ? 0x01 : 0xff;
 }
 
 #define HEADTEST_OUT_FN(name, port) \
@@ -223,7 +184,7 @@ static BYTE console_io_status_in(void)
  * interrupt/abort behavior. Setting the normal z80pack USERINT state lets
  * run_cpu() unwind through mon(), which in turn restores the UNIX terminal.
  */
-static BYTE console_io_data_in(void)
+static BYTE terminal_data_in(void)
 {
     BYTE data = imsai_sio1a_data_in();
 
@@ -234,6 +195,66 @@ static BYTE console_io_data_in(void)
     }
 
     return data;
+}
+
+/* Runtime-dispatched low ports let one targetsim binary represent both the
+ * current target and the historically accurate DSI/VTI workstation.
+ */
+static BYTE target_port00_in(void)
+{
+    return use_imsai_sio_console ? 0xff : console_io_status_in();
+}
+
+static BYTE target_port01_in(void)
+{
+    return use_imsai_sio_console ? 0xff : terminal_data_in();
+}
+
+static void target_port01_out(BYTE data)
+{
+    if (!use_imsai_sio_console)
+        imsai_sio1a_data_out(data);
+}
+
+static BYTE target_port02_in(void)
+{
+    return use_imsai_sio_console ? terminal_data_in() : 0xff;
+}
+
+static void target_port02_out(BYTE data)
+{
+    if (use_imsai_sio_console)
+        imsai_sio1a_data_out(data);
+}
+
+static BYTE target_port03_in(void)
+{
+    return use_imsai_sio_console ? imsai_sio1a_status_in() : 0xff;
+}
+
+static void target_port03_out(BYTE data)
+{
+    if (use_imsai_sio_console)
+        imsai_sio1a_status_out(data);
+}
+
+/* Port 08H is FDC+ command/status in the modern target, but it is the IMSAI
+ * SIO control register in the historical workstation. The two hardware
+ * profiles are mutually exclusive, so runtime dispatch is unambiguous.
+ */
+static BYTE target_port08_in(void)
+{
+    return use_imsai_sio_console
+        ? imsai_sio1_ctl_in()
+        : target_fdcplus_type8_status_data_in();
+}
+
+static void target_port08_out(BYTE data)
+{
+    if (use_imsai_sio_console)
+        imsai_sio1_ctl_out(data);
+    else
+        target_fdcplus_type8_command_out(data);
 }
 
 static void refresh_front_panel_from_file(void)
@@ -274,8 +295,13 @@ static void apply_runtime_overrides(void)
 {
     const char *value = getenv("TARGET_FP_PORT");
     const char *file = getenv("TARGET_FP_FILE");
+    const char *console = getenv("TARGET_CONSOLE");
     char *end = NULL;
     long parsed;
+
+    use_imsai_sio_console = console != NULL &&
+        (strcasecmp(console, "sio") == 0 ||
+         strcasecmp(console, "imsai-sio") == 0);
 
     free(front_panel_value_file);
     front_panel_value_file = NULL;
@@ -309,14 +335,13 @@ void lpt_reset(void)
  * (FFH) for IN and ignores OUT unless I/O trapping is explicitly enabled.
  */
 in_func_t *const port_in[256] = {
-    [0x00] = console_io_status_in,
-    [0x01] = console_io_data_in,
+    [0x00] = target_port00_in,
+    [0x01] = target_port01_in,
+    [0x02] = target_port02_in,
+    [0x03] = target_port03_in,
 
-    /* Surviving VID.HEX uses 02H/03H as its redirected printer interface. */
-    [0x03] = headtester_ready_in,
-
-    /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
-    [0x08] = target_fdcplus_type8_status_data_in,
+    /* 08H is runtime-dispatched between IMSAI SIO control and FDC+ status. */
+    [0x08] = target_port08_in,
     [0x0a] = target_fdcplus_type8_port0a_in,
     [0x0b] = target_fdcplus_type8_port0b_in,
 
@@ -349,11 +374,12 @@ in_func_t *const port_in[256] = {
 };
 
 out_func_t *const port_out[256] = {
-    [0x01] = imsai_sio1a_data_out,
-    [0x02] = headtester_printer_out,
+    [0x01] = target_port01_out,
+    [0x02] = target_port02_out,
+    [0x03] = target_port03_out,
 
-    /* Altair FDC+ Drive Type 8 / relocated iCOM FD3712 interface. */
-    [0x08] = target_fdcplus_type8_command_out,
+    /* 08H is runtime-dispatched between IMSAI SIO control and FDC+ command. */
+    [0x08] = target_port08_out,
     [0x09] = target_fdcplus_type8_data_out,
     [0x0a] = target_fdcplus_type8_port0a_out,
     [0x0b] = target_fdcplus_type8_port0b_out,
