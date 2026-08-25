@@ -23,6 +23,7 @@ from rom_image import inspect_rom
 from window_state import WindowState, load_window_state, save_window_state
 
 _BaseTargetSimWindow = _core.TargetSimWindow
+_BaseImageRow = _core.ImageRow
 
 FLOPPY_CHOICES = (
     FLOPPY_NONE,
@@ -95,13 +96,36 @@ def _box_children(box):
     return children
 
 
+def _set_initial_folder(dialog, remembered: str, current: str) -> None:
+    """Set a chooser location, preferring the last folder browsed by the user."""
+    if remembered:
+        folder = Path(remembered).expanduser()
+        if folder.is_dir():
+            dialog.set_initial_folder(_core.Gio.File.new_for_path(str(folder.resolve())))
+            return
+
+    if current:
+        candidate = Path(current).expanduser()
+        if candidate.is_file():
+            dialog.set_initial_file(_core.Gio.File.new_for_path(str(candidate.resolve())))
+        elif candidate.parent.is_dir():
+            dialog.set_initial_folder(
+                _core.Gio.File.new_for_path(str(candidate.parent.resolve()))
+            )
+
+
+def _parent_directory(path: str) -> str:
+    return str(Path(path).expanduser().resolve().parent)
+
+
 class RomRow(_core.Gtk.Frame):
     """Selectable 4K ROM row; empty selection means the current pinned ROM."""
 
-    def __init__(self, on_change):
+    def __init__(self, on_change, last_directory: str = ""):
         super().__init__()
         self.set_label("4K ROM @ F000H")
         self.on_change = on_change
+        self.last_directory = last_directory or ""
         self._file_dialog = None
 
         body = _core.Gtk.Box(orientation=_core.Gtk.Orientation.VERTICAL, spacing=6)
@@ -159,16 +183,7 @@ class RomRow(_core.Gtk.Frame):
     def _browse(self, _button) -> None:
         dialog = _core.Gtk.FileDialog()
         dialog.set_title("Select 4K target ROM")
-
-        current = self.get_path()
-        if current:
-            candidate = Path(current).expanduser()
-            if candidate.is_file():
-                dialog.set_initial_file(_core.Gio.File.new_for_path(str(candidate.resolve())))
-            elif candidate.parent.is_dir():
-                dialog.set_initial_folder(
-                    _core.Gio.File.new_for_path(str(candidate.parent.resolve()))
-                )
+        _set_initial_folder(dialog, self.last_directory, self.get_path())
 
         self._file_dialog = dialog
         dialog.open(self.get_root(), None, self._browse_response)
@@ -183,10 +198,43 @@ class RomRow(_core.Gtk.Frame):
 
         path = selected.get_path() if selected else None
         if path:
+            self.last_directory = _parent_directory(path)
             self.set_path(path)
 
     def _use_current(self, _button) -> None:
         self.set_path("")
+
+
+class RememberingImageRow(_BaseImageRow):
+    """Core disk-image row that shares the most recently browsed directory."""
+
+    last_directory = ""
+
+    def _browse(self, _button) -> None:
+        dialog = _core.Gtk.FileDialog()
+        dialog.set_title("Select disk image")
+        _set_initial_folder(dialog, type(self).last_directory, self.get_path())
+
+        self._file_dialog = dialog
+        dialog.open(self.get_root(), None, self._browse_response)
+
+    def _browse_response(self, dialog, result) -> None:
+        try:
+            selected = dialog.open_finish(result)
+        except _core.GLib.Error:
+            return
+        finally:
+            self._file_dialog = None
+
+        path = selected.get_path() if selected else None
+        if path:
+            type(self).last_directory = _parent_directory(path)
+            self.set_path(path)
+
+
+# The base window resolves ImageRow from core_app at runtime. Replacing that
+# global here gives CF, DSI and FDC+ rows the same remembered disk directory.
+_core.ImageRow = RememberingImageRow
 
 
 class VtiDisplay(_core.Gtk.Frame):
@@ -257,7 +305,6 @@ class VtiDisplay(_core.Gtk.Frame):
                 value = value - ord("a") + 1
             elif ord("A") <= value <= ord("Z"):
                 value = value - ord("A") + 1
-
         return value & 0x7F
 
     def _key_pressed(self, _controller, keyval, _keycode, state) -> bool:
@@ -318,6 +365,7 @@ class TargetSimWindow(_BaseTargetSimWindow):
 
     def __init__(self, *args, **kwargs):
         state = load_window_state()
+        RememberingImageRow.last_directory = state.last_disk_directory
         super().__init__(*args, **kwargs)
 
         # Extend the core two-profile selector without duplicating its widgets.
@@ -332,7 +380,7 @@ class TargetSimWindow(_BaseTargetSimWindow):
         if not isinstance(settings, _core.Gtk.Box):
             raise RuntimeError("unable to attach extended controls to the GUI settings panel")
 
-        self.rom_row = RomRow(self._controls_changed)
+        self.rom_row = RomRow(self._controls_changed, state.last_rom_directory)
         self.rom_row.set_path(self.config.rom_image)
 
         previous = None
@@ -586,6 +634,12 @@ class TargetSimWindow(_BaseTargetSimWindow):
 
         self._controls_changed()
 
+    def _spawn_finished(self, terminal, pid, error, user_data=None):
+        result = super()._spawn_finished(terminal, pid, error, user_data)
+        if error is None and pid and pid > 0 and self.session_is_emulator:
+            self.terminal.grab_focus()
+        return result
+
     def _capture_window_state(self) -> WindowState:
         width, height = self.get_default_size()
         paned_position = (
@@ -598,6 +652,8 @@ class TargetSimWindow(_BaseTargetSimWindow):
             height=height,
             maximized=self.is_maximized(),
             paned_position=paned_position,
+            last_rom_directory=self.rom_row.last_directory,
+            last_disk_directory=RememberingImageRow.last_directory,
         ).validated()
 
     def _close_request(self, *args):
