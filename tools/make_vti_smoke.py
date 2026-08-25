@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a DSI-bootable image that exercises Polymorphic VTI video/keyboard."""
+"""Create a DSI-bootable image that exercises the restored workstation VTI."""
 
 from __future__ import annotations
 
@@ -11,24 +11,22 @@ SECTORS_PER_TRACK = 26
 SECTOR_SIZE = 128
 IMAGE_SIZE = TRACKS * SECTORS_PER_TRACK * SECTOR_SIZE
 
-# T0/S1 is loaded to 0000H by the DSI bootstrap overlay. The program writes
-# "VTI " into VTI RAM at 8800H, polls the documented status port 89H until
-# D0 becomes zero, reads the key from 88H, sets the VTI character-mode bit,
-# stores it as the fifth display character, prints a success line through the
-# normal Console I/O port, then halts.
+# T0/S1 is loaded to 0000H by the DSI bootstrap overlay. Surviving VID.HEX from
+# the restored IMSAI proves that this workstation mapped its Polymorphic VTI at
+# F800H-FBFFH. The program writes "VTI " there in VTI character mode, prints a
+# success line through normal Console I/O, then halts. The workstation's VTI is
+# intentionally display-only; keyboard input remains on the normal console.
 BOOTSTRAP = bytes.fromhex(
-    "210088"            # LXI H,8800
+    "2100f8"            # LXI H,F800
     "36d623"            # MVI M,D6 ('V'|80H) / INX H
     "36d423"            # MVI M,D4 ('T'|80H) / INX H
     "36c923"            # MVI M,C9 ('I'|80H) / INX H
     "36a023"            # MVI M,A0 (space) / INX H
-    "db89e601c20f00"    # wait: IN 89 / ANI 01 / JNZ wait (000FH)
-    "db88f68077"        # IN 88 / ORI 80 / MOV M,A
-    "212a00"            # LXI H,message (002AH)
-    "060c"              # MVI B,12
-    "7ed3012305c22000"  # loop: MOV A,M / OUT 01 / INX H / DCR B / JNZ 0020H
+    "211e00"            # LXI H,message (001EH)
+    "0610"              # MVI B,16
+    "7ed3012305c21400"  # loop: MOV A,M / OUT 01 / INX H / DCR B / JNZ 0014H
     "f376"              # DI / HLT
-    "565449204b4244204f4b0d0a"  # "VTI KBD OK\r\n"
+    "56544920444953504c4159204f4b0d0a"  # "VTI DISPLAY OK\r\n"
 )
 
 
