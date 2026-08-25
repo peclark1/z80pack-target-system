@@ -206,14 +206,30 @@ class RomRow(_core.Gtk.Frame):
 
 
 class RememberingImageRow(_BaseImageRow):
-    """Core disk-image row that shares the most recently browsed directory."""
+    """Disk-image row with separate remembered CF and floppy directories."""
 
-    last_directory = ""
+    last_cf_directory = ""
+    last_floppy_directory = ""
+
+    def __init__(self, title: str, on_change, work_copy=None):
+        super().__init__(title, on_change, work_copy)
+        self._directory_kind = "cf" if title.startswith("CF") else "floppy"
+
+    def _remembered_directory(self) -> str:
+        if self._directory_kind == "cf":
+            return type(self).last_cf_directory
+        return type(self).last_floppy_directory
+
+    def _remember_directory(self, directory: str) -> None:
+        if self._directory_kind == "cf":
+            type(self).last_cf_directory = directory
+        else:
+            type(self).last_floppy_directory = directory
 
     def _browse(self, _button) -> None:
         dialog = _core.Gtk.FileDialog()
         dialog.set_title("Select disk image")
-        _set_initial_folder(dialog, type(self).last_directory, self.get_path())
+        _set_initial_folder(dialog, self._remembered_directory(), self.get_path())
 
         self._file_dialog = dialog
         dialog.open(self.get_root(), None, self._browse_response)
@@ -228,12 +244,12 @@ class RememberingImageRow(_BaseImageRow):
 
         path = selected.get_path() if selected else None
         if path:
-            type(self).last_directory = _parent_directory(path)
+            self._remember_directory(_parent_directory(path))
             self.set_path(path)
 
 
 # The base window resolves ImageRow from core_app at runtime. Replacing that
-# global here gives CF, DSI and FDC+ rows the same remembered disk directory.
+# global here gives CF and floppy rows their appropriate remembered directory.
 _core.ImageRow = RememberingImageRow
 
 
@@ -365,7 +381,8 @@ class TargetSimWindow(_BaseTargetSimWindow):
 
     def __init__(self, *args, **kwargs):
         state = load_window_state()
-        RememberingImageRow.last_directory = state.last_disk_directory
+        RememberingImageRow.last_cf_directory = state.last_cf_directory
+        RememberingImageRow.last_floppy_directory = state.last_floppy_directory
         super().__init__(*args, **kwargs)
 
         # Extend the core two-profile selector without duplicating its widgets.
@@ -653,7 +670,8 @@ class TargetSimWindow(_BaseTargetSimWindow):
             maximized=self.is_maximized(),
             paned_position=paned_position,
             last_rom_directory=self.rom_row.last_directory,
-            last_disk_directory=RememberingImageRow.last_directory,
+            last_cf_directory=RememberingImageRow.last_cf_directory,
+            last_floppy_directory=RememberingImageRow.last_floppy_directory,
         ).validated()
 
     def _close_request(self, *args):
