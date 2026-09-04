@@ -175,18 +175,12 @@ class LaunchConfig:
                 ]
             )
 
-        if controller == FLOPPY_FDCPLUS:
-            argv.extend(
-                [
-                    f"FDCPLUS0={fdcplus[0]}",
-                    f"FDCPLUS1={fdcplus[1]}",
-                    f"FDCPLUS2={fdcplus[2]}",
-                    f"FDCPLUS3={fdcplus[3]}",
-                ]
-            )
-
         argv.extend(
             [
+                f"FDCPLUS0={fdcplus[0]}",
+                f"FDCPLUS1={fdcplus[1]}",
+                f"FDCPLUS2={fdcplus[2]}",
+                f"FDCPLUS3={fdcplus[3]}",
                 f"DSI0={dsi0}",
                 f"DSI1={dsi1}",
                 f"IDE_TRACE={int(self.ide_trace)}",
