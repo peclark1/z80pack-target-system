@@ -6,7 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 import os
 
-import cairo
 from gi.repository import Gdk
 
 import core_app as _core
@@ -17,8 +16,10 @@ from launcher import (
     FLOPPY_NONE,
     PROFILE_DSI_COMPAT,
     PROFILE_DSI_VTI,
+    PROFILE_FDCPLUS_VTI,
     PROFILE_TARGET,
 )
+from mcm6571a import CELL_DOTS_X, CELL_DOTS_Y, scanline as mcm6571a_scanline
 from rom_image import inspect_rom
 from window_state import WindowState, load_window_state, save_window_state
 
@@ -36,24 +37,29 @@ FLOPPY_LABELS = (
     "Altair FDC+ — Type 8 / iCOM 3712",
 )
 FLOPPY_DSI_INDEX = FLOPPY_CHOICES.index(FLOPPY_DSI)
+FLOPPY_FDCPLUS_INDEX = FLOPPY_CHOICES.index(FLOPPY_FDCPLUS)
 
 PROFILE_CHOICES = (
     PROFILE_TARGET,
     PROFILE_DSI_COMPAT,
     PROFILE_DSI_VTI,
+    PROFILE_FDCPLUS_VTI,
 )
 PROFILE_LABELS = (
     "Target System — 60K RAM + 4K ROM",
     "DSI Compatibility — 64K RAM",
     "DSI + Polymorphic VTI — 63K RAM + 1K video",
+    "FDC+ + Polymorphic VTI — 63K RAM / 62K CP/M + 1K video",
 )
 PROFILE_DSI_VTI_INDEX = PROFILE_CHOICES.index(PROFILE_DSI_VTI)
+PROFILE_FDCPLUS_VTI_INDEX = PROFILE_CHOICES.index(PROFILE_FDCPLUS_VTI)
 
 VTI_SCREEN_PATH = _core.REPO_ROOT / "build" / "vti-screen.bin"
 VTI_KEYBOARD_PATH = _core.REPO_ROOT / "build" / "vti-kbd"
 VTI_COLS = 64
 VTI_ROWS = 16
 VTI_SIZE = VTI_COLS * VTI_ROWS
+VTI_DISPLAY_ASPECT = 4.0 / 3.0
 
 
 def _find_main_paned(window):
@@ -258,7 +264,7 @@ class VtiDisplay(_core.Gtk.Frame):
 
     def __init__(self):
         super().__init__()
-        self.set_label("Polymorphic VTI — 8800H-8BFFH · click display to type")
+        self.set_label("Polymorphic VTI Console — 64x16 · MCM6571A · click display to type")
         self.screen = bytes([0xA0]) * VTI_SIZE
 
         self.area = _core.Gtk.DrawingArea()
@@ -341,22 +347,54 @@ class VtiDisplay(_core.Gtk.Frame):
         cr.set_source_rgb(0.015, 0.02, 0.015)
         cr.paint()
 
-        cell_w = width / VTI_COLS
-        cell_h = height / VTI_ROWS
+        # The VTI's 64x16 layout is a 640x240 timing raster (10x15 cells),
+        # intended for a conventional 4:3 CRT. Preserve that physical display
+        # shape regardless of how GTK resizes the pane; unused space remains
+        # black instead of stretching the character generator independently in
+        # X and Y.
+        if width <= 0 or height <= 0:
+            return
+        available_aspect = width / height
+        if available_aspect > VTI_DISPLAY_ASPECT:
+            display_h = float(height)
+            display_w = display_h * VTI_DISPLAY_ASPECT
+            origin_x = (width - display_w) / 2.0
+            origin_y = 0.0
+        else:
+            display_w = float(width)
+            display_h = display_w / VTI_DISPLAY_ASPECT
+            origin_x = 0.0
+            origin_y = (height - display_h) / 2.0
+
+        cell_w = display_w / VTI_COLS
+        cell_h = display_h / VTI_ROWS
+        dot_w = cell_w / CELL_DOTS_X
+        dot_h = cell_h / CELL_DOTS_Y
         cr.set_source_rgb(0.68, 1.0, 0.68)
-        cr.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(cell_h * 0.72)
 
         for offset, value in enumerate(self.screen):
             row, col = divmod(offset, VTI_COLS)
-            x = col * cell_w
-            y = row * cell_h
+            x = origin_x + col * cell_w
+            y = origin_y + row * cell_h
 
             if value & 0x80:
                 code = value & 0x7F
-                if 0x20 <= code <= 0x7E:
-                    cr.move_to(x + cell_w * 0.08, y + cell_h * 0.78)
-                    cr.show_text(chr(code))
+                # The real MCM6571A produces a 7x9 bitmap in a 10x15 cell.
+                # Some glyphs (notably descenders) are shifted down three
+                # scan lines by the character generator itself.
+                for scan in range(CELL_DOTS_Y):
+                    pattern = mcm6571a_scanline(code, scan)
+                    if not pattern:
+                        continue
+                    for dot in range(7):
+                        if pattern & (1 << (7 - dot)):
+                            cr.rectangle(
+                                x + dot * dot_w,
+                                y + scan * dot_h,
+                                dot_w + 0.20,
+                                dot_h + 0.20,
+                            )
+                cr.fill()
                 continue
 
             # VTI semigraphics divides a character cell into 2x3 blocks.
@@ -485,17 +523,20 @@ class TargetSimWindow(_BaseTargetSimWindow):
             fdcplus_box.append(row)
 
         self.fdcplus_write = _core.Gtk.CheckButton(label="Allow FDC+ writes")
-        self.fdcplus_write.set_active(getattr(self.config, "fdcplus_write", False))
+        self.fdcplus_write.set_active(
+            self.config.profile == PROFILE_FDCPLUS_VTI
+            or getattr(self.config, "fdcplus_write", False)
+        )
         self.fdcplus_write.set_tooltip_text(
-            "Off by default to protect disk images. Prefer Work Copy before enabling writes."
+            "Enabled by default in the dedicated FDC+/VTI profile. Prefer Work Copy for archival images."
         )
         self.fdcplus_write.connect("toggled", self._controls_changed)
         fdcplus_box.append(self.fdcplus_write)
 
         safety = _core.Gtk.Label(
             label=(
-                "FDC+ Type 8 media are attached read-only unless “Allow FDC+ writes” "
-                "is enabled. Work Copy creates a disposable IBM-3740 image under build/."
+                "FDC+ Type 8 media are writable when “Allow FDC+ writes” is enabled. "
+                "Work Copy creates a disposable IBM-3740 image under build/."
             ),
             xalign=0,
         )
@@ -519,17 +560,25 @@ class TargetSimWindow(_BaseTargetSimWindow):
         settings.insert_child_after(self.dsi_revealer, selector_box)
         settings.insert_child_after(self.fdcplus_revealer, self.dsi_revealer)
 
-        # The VTI display shares the right pane with the normal Console I/O
-        # terminal. Historical VTI software writes directly to its 1 KB memory
-        # window, so this view updates independently of serial console output.
+        # The VTI is the complete operator console in FDC+ VTI mode: display
+        # RAM and George Risk keyboard both terminate on the card. Keep the VTE
+        # terminal as an optional emulator log instead of a second console.
         self.vti_display = VtiDisplay()
         self.vti_revealer = _core.Gtk.Revealer()
         self.vti_revealer.set_transition_type(_core.Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.vti_revealer.set_child(self.vti_display)
+
+        self.diagnostics_toggle = _core.Gtk.CheckButton(label="Show emulator log")
+        self.diagnostics_toggle.set_tooltip_text(
+            "Show targetsim diagnostics and trace output below the VTI console."
+        )
+        self.diagnostics_toggle.connect("toggled", self._diagnostics_toggled)
+
         main_paned = _find_main_paned(self)
         terminal_box = main_paned.get_end_child() if main_paned is not None else None
         if isinstance(terminal_box, _core.Gtk.Box):
             terminal_box.insert_child_after(self.vti_revealer, self.command)
+            terminal_box.insert_child_after(self.diagnostics_toggle, self.vti_revealer)
 
         # GTK recommends get/set_default_size() for persistent window sizing;
         # it retains the normal (unmaximized) dimensions as the user resizes.
@@ -561,9 +610,12 @@ class TargetSimWindow(_BaseTargetSimWindow):
         return PROFILE_TARGET
 
     def _effective_floppy_index(self) -> int:
-        if self._selected_profile() != PROFILE_TARGET:
-            return FLOPPY_DSI_INDEX
-        return int(self.floppy_controller.get_selected())
+        profile = self._selected_profile()
+        if profile == PROFILE_TARGET:
+            return int(self.floppy_controller.get_selected())
+        if profile == PROFILE_FDCPLUS_VTI:
+            return FLOPPY_FDCPLUS_INDEX
+        return FLOPPY_DSI_INDEX
 
     def _update_floppy_visibility(self) -> None:
         if not hasattr(self, "dsi_revealer"):
@@ -614,20 +666,53 @@ class TargetSimWindow(_BaseTargetSimWindow):
             )
         return config
 
+    def _diagnostics_toggled(self, *_args) -> None:
+        self._update_console_surface()
+        if self.diagnostics_toggle.get_active() and self.terminal.get_visible():
+            self.terminal.grab_focus()
+        elif self.vti_display.get_visible():
+            self.vti_display.area.grab_focus()
+
+    def _update_console_surface(self) -> None:
+        if not hasattr(self, "vti_revealer"):
+            return
+
+        profile = self._selected_profile()
+        fdcplus_vti_mode = profile == PROFILE_FDCPLUS_VTI
+        vti_mode = profile in {PROFILE_DSI_VTI, PROFILE_FDCPLUS_VTI}
+        show_log = not fdcplus_vti_mode or self.diagnostics_toggle.get_active()
+
+        self.vti_revealer.set_reveal_child(vti_mode)
+        self.diagnostics_toggle.set_visible(fdcplus_vti_mode)
+        self.status.set_visible(show_log)
+        self.command.set_visible(show_log)
+        self.terminal.set_visible(show_log)
+
+        # In the dedicated FDC+ mode the VTI should occupy the right pane like
+        # a single physical keyboard/display console. DSI+VTI retains the old
+        # split presentation because its serial console is still meaningful.
+        self.vti_display.set_vexpand(fdcplus_vti_mode)
+        self.vti_display.area.set_vexpand(fdcplus_vti_mode)
+
     def _profile_changed(self, *_args):
         if self.initializing:
             return
 
         profile = self._selected_profile()
         target_mode = profile == PROFILE_TARGET
+        dsi_mode = profile in {PROFILE_DSI_COMPAT, PROFILE_DSI_VTI}
+        fdcplus_vti_mode = profile == PROFILE_FDCPLUS_VTI
 
         self.cf0.set_sensitive(target_mode)
         self.cf1.set_sensitive(target_mode)
         self.ide_trace.set_sensitive(target_mode)
         if target_mode:
             self.dsi_bootstrap.set_sensitive(True)
-        else:
+        elif dsi_mode:
             self.dsi_bootstrap.set_active(True)
+            self.dsi_bootstrap.set_sensitive(False)
+        else:
+            self.dsi_bootstrap.set_active(False)
             self.dsi_bootstrap.set_sensitive(False)
 
         if hasattr(self, "rom_row"):
@@ -635,26 +720,41 @@ class TargetSimWindow(_BaseTargetSimWindow):
 
         if hasattr(self, "floppy_controller"):
             self.floppy_controller.set_sensitive(target_mode)
-            desired = self._target_floppy_selection if target_mode else FLOPPY_DSI_INDEX
+            if target_mode:
+                desired = self._target_floppy_selection
+            elif fdcplus_vti_mode:
+                desired = FLOPPY_FDCPLUS_INDEX
+            else:
+                desired = FLOPPY_DSI_INDEX
             if self.floppy_controller.get_selected() != desired:
                 self.floppy_controller.set_selected(desired)
             self._update_floppy_visibility()
 
         if hasattr(self, "fdcplus_rows"):
+            fdcplus_enabled = target_mode or fdcplus_vti_mode
             for row in self.fdcplus_rows:
-                row.set_sensitive(target_mode)
-            self.fdcplus_write.set_sensitive(target_mode)
-            self.fdcplus_trace.set_sensitive(target_mode)
+                row.set_sensitive(fdcplus_enabled)
+            if fdcplus_vti_mode and not self.fdcplus_write.get_active():
+                self.fdcplus_write.set_active(True)
+            self.fdcplus_write.set_sensitive(fdcplus_enabled)
+            self.fdcplus_trace.set_sensitive(fdcplus_enabled)
 
         if hasattr(self, "vti_revealer"):
-            self.vti_revealer.set_reveal_child(profile == PROFILE_DSI_VTI)
+            self._update_console_surface()
 
         self._controls_changed()
 
     def _spawn_finished(self, terminal, pid, error, user_data=None):
         result = super()._spawn_finished(terminal, pid, error, user_data)
         if error is None and pid and pid > 0 and self.session_is_emulator:
-            self.terminal.grab_focus()
+            if (
+                self._selected_profile() == PROFILE_FDCPLUS_VTI
+                and hasattr(self, "vti_display")
+                and not self.diagnostics_toggle.get_active()
+            ):
+                self.vti_display.area.grab_focus()
+            else:
+                self.terminal.grab_focus()
         return result
 
     def _capture_window_state(self) -> WindowState:

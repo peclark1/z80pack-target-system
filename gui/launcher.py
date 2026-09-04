@@ -12,7 +12,6 @@ from typing import Any
 try:
     from vte_compat import install_feed_child_string_compat
 except ImportError:
-    # Package import used by host-side tests.
     from .vte_compat import install_feed_child_string_compat
 
 try:
@@ -25,14 +24,18 @@ try:
 except ImportError:
     from .image_info import IBM3740_SIZE
 
-# app.py imports this module after loading VTE. Normalize Ubuntu 24.04's
-# byte-array feed_child() binding so the GUI can send Ctrl-] as a Python str.
 install_feed_child_string_compat()
 
 PROFILE_TARGET = "target"
 PROFILE_DSI_COMPAT = "dsi-compat"
 PROFILE_DSI_VTI = "dsi-vti"
-PROFILES = {PROFILE_TARGET, PROFILE_DSI_COMPAT, PROFILE_DSI_VTI}
+PROFILE_FDCPLUS_VTI = "fdcplus-vti"
+PROFILES = {
+    PROFILE_TARGET,
+    PROFILE_DSI_COMPAT,
+    PROFILE_DSI_VTI,
+    PROFILE_FDCPLUS_VTI,
+}
 
 FLOPPY_NONE = "none"
 FLOPPY_DSI = "dsi"
@@ -63,14 +66,11 @@ class LaunchConfig:
     cpu_mhz: int = 4
 
     def active_floppy_controller(self) -> str:
-        """Return the controller used for this launch.
-
-        Both compatibility profiles are inherently DSI machines. Target mode
-        uses the explicit GUI selection and never attaches DSI and FDC+
-        together.
-        """
+        """Return the controller used for this launch."""
         if self.profile in {PROFILE_DSI_COMPAT, PROFILE_DSI_VTI}:
             return FLOPPY_DSI
+        if self.profile == PROFILE_FDCPLUS_VTI:
+            return FLOPPY_FDCPLUS
         return self.floppy_controller
 
     def validate(self) -> list[str]:
@@ -128,6 +128,9 @@ class LaunchConfig:
         if self.profile in {PROFILE_DSI_COMPAT, PROFILE_DSI_VTI} and not self.dsi0:
             errors.append("DSI compatibility mode requires a DSI0 image")
 
+        if self.profile == PROFILE_FDCPLUS_VTI and not self.fdcplus0:
+            errors.append("FDC+ VTI mode requires an FDCPLUS0 boot image")
+
         if self.profile == PROFILE_TARGET:
             floppy0 = ""
             if controller == FLOPPY_DSI:
@@ -140,20 +143,19 @@ class LaunchConfig:
         return errors
 
     def make_argv(self, repo_root: Path) -> list[str]:
-        """Return the Makefile command used by the GUI.
-
-        The GUI deliberately drives the same Makefile targets used
-        interactively. Only the selected floppy controller is passed through,
-        so DSI and FDC+ cannot accidentally be attached at the same time.
-        """
+        """Return the launch command used by the GUI."""
         repo_root = repo_root.resolve()
-        if self.profile == PROFILE_DSI_VTI:
-            target = "dsi-vti"
-        elif self.profile == PROFILE_DSI_COMPAT:
-            target = "dsi-compat"
+        if self.profile == PROFILE_FDCPLUS_VTI:
+            argv = ["bash", str(repo_root / "scripts" / "run-fdcplus-vti.sh")]
         else:
-            target = "run"
-        argv = ["make", "-C", str(repo_root), target]
+            if self.profile == PROFILE_DSI_VTI:
+                target = "dsi-vti"
+            elif self.profile == PROFILE_DSI_COMPAT:
+                target = "dsi-compat"
+            else:
+                target = "run"
+            argv = ["make", "-C", str(repo_root), target]
+
         controller = self.active_floppy_controller()
 
         dsi0 = self.dsi0 if controller == FLOPPY_DSI else ""
@@ -165,14 +167,21 @@ class LaunchConfig:
         )
 
         if self.profile == PROFILE_TARGET:
-            # Explicit empty values suppress Makefile defaults when the user
-            # intentionally wants a non-IDE target session. An empty ROM_IMAGE
-            # means use the pinned/current build/target-monitor.hex.
             argv.extend(
                 [
                     f"ROM_IMAGE={self.rom_image}",
                     f"CF0={self.cf0}",
                     f"CF1={self.cf1}",
+                ]
+            )
+
+        # Target mode always passes explicit FDC+ values, including empty ones,
+        # so Makefile defaults cannot accidentally attach a stale drive image.
+        # The dedicated FDC+/VTI profile also needs these values. Historical
+        # DSI compatibility profiles intentionally omit FDC+ arguments entirely.
+        if self.profile in {PROFILE_TARGET, PROFILE_FDCPLUS_VTI}:
+            argv.extend(
+                [
                     f"FDCPLUS0={fdcplus[0]}",
                     f"FDCPLUS1={fdcplus[1]}",
                     f"FDCPLUS2={fdcplus[2]}",
@@ -201,8 +210,6 @@ class LaunchConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
-        # Never persist write authorization. Each application launch must
-        # explicitly opt in again before an archival disk image can be changed.
         value["dsi_write"] = False
         value["fdcplus_write"] = False
         return value
@@ -212,9 +219,6 @@ class LaunchConfig:
         fields = cls.__dataclass_fields__
         config = cls(**{k: v for k, v in value.items() if k in fields})
 
-        # Backward compatibility with GUI settings written before the explicit
-        # floppy-controller selector existed. Prefer FDC+ if one of its images
-        # was selected; otherwise preserve an existing DSI selection.
         if "floppy_controller" not in value:
             if any(getattr(config, f"fdcplus{number}") for number in range(4)):
                 config.floppy_controller = FLOPPY_FDCPLUS

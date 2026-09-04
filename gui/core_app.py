@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -164,6 +165,7 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         self.running = False
         self.pending_restart = False
         self.session_is_emulator = False
+        self.session_pid = 0
         self.initializing = True
         self._syncing_front_panel = False
         self.fp_switch_buttons: dict[int, Gtk.ToggleButton] = {}
@@ -523,6 +525,7 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         if self.running:
             return
         self.session_is_emulator = emulator
+        self.session_pid = 0
         self.terminal.reset(True, True)
         self.status.set_text(label)
         self._set_running(True)
@@ -543,13 +546,16 @@ class TargetSimWindow(Gtk.ApplicationWindow):
 
     def _spawn_finished(self, _terminal, pid, error, _user_data=None) -> None:
         if error is not None:
+            self.session_pid = 0
             self.status.set_text(f"Start failed: {error.message}")
             self._set_running(False)
         elif pid and pid > 0:
+            self.session_pid = int(pid)
             self.status.set_text("Running" if self.session_is_emulator else "Building…")
 
     def _child_exited(self, _terminal, status) -> None:
         was_emulator = self.session_is_emulator
+        self.session_pid = 0
         self.session_is_emulator = False
         self._set_running(False)
         if self.pending_restart and was_emulator:
@@ -585,9 +591,37 @@ class TargetSimWindow(Gtk.ApplicationWindow):
             False,
         )
 
+    def _terminate_if_still_running(self, pid: int) -> bool:
+        """Terminate a session that did not consume the normal Ctrl-] escape.
+
+        The dedicated VTI profile never reads the serial-console input port, so
+        a Ctrl-] written to the hidden VTE PTY cannot reach targetsim's legacy
+        escape check. Retain Ctrl-] as the graceful first choice for profiles
+        that do poll the serial console, then fall back to terminating the VTE
+        child if it is still the same running emulator a moment later.
+        """
+        if (
+            not self.running
+            or not self.session_is_emulator
+            or not pid
+            or self.session_pid != pid
+        ):
+            return False
+
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            self.status.set_text(f"Stop failed: {exc}")
+        return False
+
     def _stop(self, _button) -> None:
         if self.running and self.session_is_emulator:
+            pid = self.session_pid
             self.terminal.feed_child("\x1d")
+            if pid:
+                GLib.timeout_add(250, self._terminate_if_still_running, pid)
 
     def _restart(self, _button) -> None:
         if self.running and self.session_is_emulator:
@@ -602,7 +636,7 @@ class TargetSimWindow(Gtk.ApplicationWindow):
         except OSError:
             pass
         if self.running and self.session_is_emulator:
-            self.terminal.feed_child("\x1d")
+            self._stop(None)
         return False
 
     @staticmethod
