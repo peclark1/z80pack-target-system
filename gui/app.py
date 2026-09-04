@@ -6,7 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 import os
 
-import cairo
 from gi.repository import Gdk
 
 import core_app as _core
@@ -20,6 +19,7 @@ from launcher import (
     PROFILE_FDCPLUS_VTI,
     PROFILE_TARGET,
 )
+from mcm6571a import CELL_DOTS_X, CELL_DOTS_Y, scanline as mcm6571a_scanline
 from rom_image import inspect_rom
 from window_state import WindowState, load_window_state, save_window_state
 
@@ -263,7 +263,7 @@ class VtiDisplay(_core.Gtk.Frame):
 
     def __init__(self):
         super().__init__()
-        self.set_label("Polymorphic VTI Console — 64x16 · click display to type")
+        self.set_label("Polymorphic VTI Console — 64x16 · MCM6571A · click display to type")
         self.screen = bytes([0xA0]) * VTI_SIZE
 
         self.area = _core.Gtk.DrawingArea()
@@ -348,9 +348,9 @@ class VtiDisplay(_core.Gtk.Frame):
 
         cell_w = width / VTI_COLS
         cell_h = height / VTI_ROWS
+        dot_w = cell_w / CELL_DOTS_X
+        dot_h = cell_h / CELL_DOTS_Y
         cr.set_source_rgb(0.68, 1.0, 0.68)
-        cr.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(cell_h * 0.72)
 
         for offset, value in enumerate(self.screen):
             row, col = divmod(offset, VTI_COLS)
@@ -359,9 +359,22 @@ class VtiDisplay(_core.Gtk.Frame):
 
             if value & 0x80:
                 code = value & 0x7F
-                if 0x20 <= code <= 0x7E:
-                    cr.move_to(x + cell_w * 0.08, y + cell_h * 0.78)
-                    cr.show_text(chr(code))
+                # The real MCM6571A produces a 7x9 bitmap in a 10x15 cell.
+                # Some glyphs (notably descenders) are shifted down three
+                # scan lines by the character generator itself.
+                for scan in range(CELL_DOTS_Y):
+                    pattern = mcm6571a_scanline(code, scan)
+                    if not pattern:
+                        continue
+                    for dot in range(7):
+                        if pattern & (1 << (7 - dot)):
+                            cr.rectangle(
+                                x + dot * dot_w,
+                                y + scan * dot_h,
+                                dot_w + 0.20,
+                                dot_h + 0.20,
+                            )
+                cr.fill()
                 continue
 
             # VTI semigraphics divides a character cell into 2x3 blocks.
