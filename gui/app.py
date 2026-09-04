@@ -59,6 +59,7 @@ VTI_KEYBOARD_PATH = _core.REPO_ROOT / "build" / "vti-kbd"
 VTI_COLS = 64
 VTI_ROWS = 16
 VTI_SIZE = VTI_COLS * VTI_ROWS
+VTI_DISPLAY_ASPECT = 4.0 / 3.0
 
 
 def _find_main_paned(window):
@@ -346,16 +347,35 @@ class VtiDisplay(_core.Gtk.Frame):
         cr.set_source_rgb(0.015, 0.02, 0.015)
         cr.paint()
 
-        cell_w = width / VTI_COLS
-        cell_h = height / VTI_ROWS
+        # The VTI's 64x16 layout is a 640x240 timing raster (10x15 cells),
+        # intended for a conventional 4:3 CRT. Preserve that physical display
+        # shape regardless of how GTK resizes the pane; unused space remains
+        # black instead of stretching the character generator independently in
+        # X and Y.
+        if width <= 0 or height <= 0:
+            return
+        available_aspect = width / height
+        if available_aspect > VTI_DISPLAY_ASPECT:
+            display_h = float(height)
+            display_w = display_h * VTI_DISPLAY_ASPECT
+            origin_x = (width - display_w) / 2.0
+            origin_y = 0.0
+        else:
+            display_w = float(width)
+            display_h = display_w / VTI_DISPLAY_ASPECT
+            origin_x = 0.0
+            origin_y = (height - display_h) / 2.0
+
+        cell_w = display_w / VTI_COLS
+        cell_h = display_h / VTI_ROWS
         dot_w = cell_w / CELL_DOTS_X
         dot_h = cell_h / CELL_DOTS_Y
         cr.set_source_rgb(0.68, 1.0, 0.68)
 
         for offset, value in enumerate(self.screen):
             row, col = divmod(offset, VTI_COLS)
-            x = col * cell_w
-            y = row * cell_h
+            x = origin_x + col * cell_w
+            y = origin_y + row * cell_h
 
             if value & 0x80:
                 code = value & 0x7F
@@ -503,17 +523,20 @@ class TargetSimWindow(_BaseTargetSimWindow):
             fdcplus_box.append(row)
 
         self.fdcplus_write = _core.Gtk.CheckButton(label="Allow FDC+ writes")
-        self.fdcplus_write.set_active(getattr(self.config, "fdcplus_write", False))
+        self.fdcplus_write.set_active(
+            self.config.profile == PROFILE_FDCPLUS_VTI
+            or getattr(self.config, "fdcplus_write", False)
+        )
         self.fdcplus_write.set_tooltip_text(
-            "Off by default to protect disk images. Prefer Work Copy before enabling writes."
+            "Enabled by default in the dedicated FDC+/VTI profile. Prefer Work Copy for archival images."
         )
         self.fdcplus_write.connect("toggled", self._controls_changed)
         fdcplus_box.append(self.fdcplus_write)
 
         safety = _core.Gtk.Label(
             label=(
-                "FDC+ Type 8 media are attached read-only unless “Allow FDC+ writes” "
-                "is enabled. Work Copy creates a disposable IBM-3740 image under build/."
+                "FDC+ Type 8 media are writable when “Allow FDC+ writes” is enabled. "
+                "Work Copy creates a disposable IBM-3740 image under build/."
             ),
             xalign=0,
         )
@@ -711,6 +734,8 @@ class TargetSimWindow(_BaseTargetSimWindow):
             fdcplus_enabled = target_mode or fdcplus_vti_mode
             for row in self.fdcplus_rows:
                 row.set_sensitive(fdcplus_enabled)
+            if fdcplus_vti_mode and not self.fdcplus_write.get_active():
+                self.fdcplus_write.set_active(True)
             self.fdcplus_write.set_sensitive(fdcplus_enabled)
             self.fdcplus_trace.set_sensitive(fdcplus_enabled)
 
