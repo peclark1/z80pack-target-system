@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 TARGET_DIR="$ROOT/build/z80pack-upstream/targets100sim"
 TARGET_BIN="$TARGET_DIR/targetsim"
+TARGET_PREPARED="$TARGET_DIR/.target-prepared"
 
 FDCPLUS0=""
 FDCPLUS1=""
@@ -42,10 +43,21 @@ if [[ "$size" != 256256 ]]; then
     exit 2
 fi
 
-# Use the repository's dependency-tracked targetsim build. If none of the
-# emulator sources/configs changed, this is a no-op and Start proceeds almost
-# immediately. When a tracked backend input did change, Make refreshes the
-# generated target overlay and rebuilds targetsim once before launching.
+# Use the repository's dependency-tracked targetsim build. The dedicated VTI
+# profile added a few overlay inputs after the original Makefile dependency
+# list was created, so invalidate the preparation stamp only when one of those
+# files is newer. With no source/config changes, Make is a no-op and Start is
+# effectively immediate; after development changes it rebuilds once.
+for source in \
+    "$ROOT/emulator/conf/fdcplus-vti.conf" \
+    "$ROOT/emulator/srcsim/target-fdcplus-bootstrap.c" \
+    "$ROOT/emulator/srcsim/target-fdcplus-bootstrap.h"
+do
+    if [[ ! -e "$TARGET_PREPARED" || "$source" -nt "$TARGET_PREPARED" ]]; then
+        rm -f "$TARGET_PREPARED"
+        break
+    fi
+done
 make -C "$ROOT" build >/dev/null
 
 mkdir -p "$ROOT/build"
