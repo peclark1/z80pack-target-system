@@ -143,17 +143,19 @@ class LaunchConfig:
         return errors
 
     def make_argv(self, repo_root: Path) -> list[str]:
-        """Return the Makefile command used by the GUI."""
+        """Return the launch command used by the GUI."""
         repo_root = repo_root.resolve()
-        if self.profile == PROFILE_DSI_VTI:
-            target = "dsi-vti"
-        elif self.profile == PROFILE_DSI_COMPAT:
-            target = "dsi-compat"
-        elif self.profile == PROFILE_FDCPLUS_VTI:
-            target = "fdcplus-vti"
+        if self.profile == PROFILE_FDCPLUS_VTI:
+            argv = ["bash", str(repo_root / "scripts" / "run-fdcplus-vti.sh")]
         else:
-            target = "run"
-        argv = ["make", "-C", str(repo_root), target]
+            if self.profile == PROFILE_DSI_VTI:
+                target = "dsi-vti"
+            elif self.profile == PROFILE_DSI_COMPAT:
+                target = "dsi-compat"
+            else:
+                target = "run"
+            argv = ["make", "-C", str(repo_root), target]
+
         controller = self.active_floppy_controller()
 
         dsi0 = self.dsi0 if controller == FLOPPY_DSI else ""
