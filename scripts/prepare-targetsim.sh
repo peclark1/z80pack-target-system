@@ -60,10 +60,30 @@ cp "$ROOT/emulator/srcsim/target-serialio-usb.h" "$TARGET/srcsim/target-serialio
 cp "$ROOT/emulator/srcsim/target-vti.c" "$TARGET/srcsim/target-vti.c"
 cp "$ROOT/emulator/srcsim/target-vti.h" "$TARGET/srcsim/target-vti.h"
 
-# Keep target and historical DSI compatibility configs with the generated
-# machine for convenient manual launches. The DSI+VTI profile uses the same
-# 64K RAM configuration; the VTI device redirects F800H-FBFFH at runtime.
+# z80pack's port dispatch table is static. Expose the VTI keyboard ports used
+# by the historical and dedicated profiles; target-vti.c itself returns FFH
+# unless the corresponding framebuffer base is active. Keep this guarded so a
+# future direct source implementation cannot silently receive duplicate ports.
+python3 - "$TARGET/srcsim/simio.c" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+anchor = "    [0x7f] = target_dsi_fdc1_status_in,\n\n    /* Original disk-head test fixture status and A/D converter. */"
+replacement = "    [0x7f] = target_dsi_fdc1_status_in,\n\n    /* Polymorphic VTI keyboard: port equals framebuffer high byte. */\n    [0x88] = target_vti_keyboard_88_in,\n    [0xf8] = target_vti_keyboard_f8_in,\n    [0xfc] = target_vti_keyboard_fc_in,\n\n    /* Original disk-head test fixture status and A/D converter. */"
+if replacement in text:
+    pass
+elif anchor in text:
+    path.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
+else:
+    raise SystemExit("error: target simio.c no longer matches VTI keyboard-port patch anchor")
+PY
+
+# Keep target and compatibility configs with the generated machine for
+# convenient manual launches.
 cp "$ROOT/emulator/conf/system.conf" "$TARGET/conf_3d/system.conf"
 cp "$ROOT/emulator/conf/dsi-compat.conf" "$TARGET/conf_3d/dsi-compat.conf"
+cp "$ROOT/emulator/conf/fdcplus-vti.conf" "$TARGET/conf_3d/fdcplus-vti.conf"
 
 echo "prepared target machine at $TARGET"
