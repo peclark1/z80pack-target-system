@@ -2,7 +2,7 @@
  * Polymorphic Systems Video Terminal Interface (VTI) overlay.
  *
  * The VTI exposes 1 KB of memory-mapped display RAM on any 1 KB boundary.
- * The keyboard input port follows the high byte of that display base.  The
+ * The keyboard input port follows the high byte of that display base. The
  * restored workstation historically used F800H-FBFFH / port F8H, while the
  * dedicated FDC+/VTI CP/M profile uses FC00H-FFFFH / port FCH so CP/M has one
  * contiguous 63K RAM region below video memory.
@@ -11,8 +11,10 @@
  * TARGET_VTI_BASE selects the display base (default F800H).
  * TARGET_VTI_SCREEN names the 1024-byte shared display file.
  * TARGET_VTI_KBD names a FIFO written by the GTK front end.
- * TARGET_VTI_IRQ selects an 8080 RST level 0-7 for keyboard strobe emulation;
- * omit it to leave keyboard interrupts disabled.
+ * TARGET_VTI_VI selects the S-100 vectored-interrupt line VI0-VI7 used by the
+ * VTI keyboard strobe. The North Star ZPB converts that VI level to the
+ * corresponding 8080 RST instruction during interrupt acknowledge. Omit it to
+ * leave keyboard interrupts disabled.
  */
 
 #include <errno.h>
@@ -39,7 +41,7 @@
 static int vti_enabled;
 static unsigned vti_base = TARGET_VTI_DEFAULT_BASE;
 static BYTE vti_keyboard_port = (TARGET_VTI_DEFAULT_BASE >> 8);
-static int vti_irq = -1;
+static int vti_vi = -1;
 
 static int screen_fd = -1;
 static BYTE *screen_map;
@@ -76,12 +78,12 @@ static char *default_path(const char *leaf)
 static void configure_vti(void)
 {
     const char *base_text = getenv("TARGET_VTI_BASE");
-    const char *irq_text = getenv("TARGET_VTI_IRQ");
+    const char *vi_text = getenv("TARGET_VTI_VI");
     char *end = NULL;
     unsigned long value;
 
     vti_base = TARGET_VTI_DEFAULT_BASE;
-    vti_irq = -1;
+    vti_vi = -1;
 
     if (base_text != NULL && *base_text != '\0') {
         value = strtoul(base_text, &end, 0);
@@ -95,15 +97,15 @@ static void configure_vti(void)
     }
     vti_keyboard_port = (BYTE) (vti_base >> 8);
 
-    if (irq_text != NULL && *irq_text != '\0') {
+    if (vi_text != NULL && *vi_text != '\0') {
         end = NULL;
-        value = strtoul(irq_text, &end, 0);
-        if (end != irq_text && *end == '\0' && value <= 7)
-            vti_irq = (int) value;
+        value = strtoul(vi_text, &end, 0);
+        if (end != vi_text && *end == '\0' && value <= 7)
+            vti_vi = (int) value;
         else
             fprintf(stderr,
-                    "target-vti: invalid TARGET_VTI_IRQ '%s'; interrupts disabled\n",
-                    irq_text);
+                    "target-vti: invalid TARGET_VTI_VI '%s'; interrupts disabled\n",
+                    vi_text);
     }
 }
 
@@ -179,14 +181,16 @@ static int init_screen(void)
 
 static void request_keyboard_interrupt(void)
 {
-    if (vti_irq < 0)
+    if (vti_vi < 0)
         return;
 
-    /* The PIC-8 supplies an 8080 restart opcode during interrupt acknowledge.
-     * RST n is C7H + 8*n. The restored VTI is wired to VI2, so the dedicated
-     * profile selects IRQ/RST 2 and enters at 0010H.
+    /* The VTI manual provides a JMP2 pad for direct connection to any S-100
+     * VI0-VI7 line. The North Star ZPB latches those lines during interrupt
+     * acknowledge and supplies the corresponding RST instruction itself.
+     * Therefore VI n is represented here as RST n: C7H + 8*n. The dedicated
+     * profile uses VI2, which enters at 0010H. No PIC-8 is involved.
      */
-    int_data = 0xc7 + (vti_irq << 3);
+    int_data = 0xc7 + (vti_vi << 3);
     int_int = true;
 }
 
@@ -299,10 +303,15 @@ void target_vti_init(void)
         return;
     }
 
-    fprintf(stderr,
-            "target-vti: display %04XH-%04XH keyboard port %02XH%s\n",
-            vti_base, vti_base + TARGET_VTI_SIZE - 1, vti_keyboard_port,
-            vti_irq >= 0 ? " with interrupt input" : "");
+    if (vti_vi >= 0)
+        fprintf(stderr,
+                "target-vti: display %04XH-%04XH keyboard port %02XH via ZPB VI%d/RST %d\n",
+                vti_base, vti_base + TARGET_VTI_SIZE - 1, vti_keyboard_port,
+                vti_vi, vti_vi);
+    else
+        fprintf(stderr,
+                "target-vti: display %04XH-%04XH keyboard port %02XH\n",
+                vti_base, vti_base + TARGET_VTI_SIZE - 1, vti_keyboard_port);
 }
 
 void target_vti_reset(void)
@@ -341,5 +350,5 @@ void target_vti_exit(void)
     }
 
     vti_enabled = 0;
-    vti_irq = -1;
+    vti_vi = -1;
 }
