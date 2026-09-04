@@ -89,6 +89,7 @@ void target_fdcplus_bootstrap_init(void)
     const char *path;
     FILE *fp;
     long size;
+    unsigned load_base;
     unsigned destination;
     unsigned sector;
     unsigned copied = 0;
@@ -103,7 +104,8 @@ void target_fdcplus_bootstrap_init(void)
         return;
     }
 
-    destination = parse_load_base();
+    load_base = parse_load_base();
+    destination = load_base;
     if (destination + SYSTEM_BYTES > VTI_BASE_LIMIT) {
         fprintf(stderr,
                 "target-fdcplus-bootstrap: system image %04XH-%04XH would overlap VTI at FC00H\n",
@@ -131,31 +133,19 @@ void target_fdcplus_bootstrap_init(void)
         return;
     }
 
-    /* Mike Douglas's 3712 CP/M boot layout contains 25 system sectors on
-     * track 0, beginning with physical sector 3, followed by all 26 sectors
-     * of track 1. The physical interleave is odd sectors then even sectors.
+    /* Mike Douglas's physical loader reads these sectors with an odd/even
+     * interleave for rotational performance, but places them in ordinary
+     * logical order in memory. A host-side direct loader therefore copies
+     * track 0 sectors 2..26 followed by track 1 sectors 1..26. Sector 1 of
+     * track 0 is the bootstrap sector and is not part of the 51-sector CP/M
+     * image.
      */
-    if (fseek(fp, 0, SEEK_SET) != 0) {
-        fclose(fp);
-        return;
-    }
-
-    for (sector = 3; sector <= 25; sector += 2) {
+    for (sector = 2; sector <= 26; sector++) {
         if (copy_sector(fp, 0, sector, &destination) < 0)
             goto read_error;
         copied++;
     }
-    for (sector = 2; sector <= 26; sector += 2) {
-        if (copy_sector(fp, 0, sector, &destination) < 0)
-            goto read_error;
-        copied++;
-    }
-    for (sector = 1; sector <= 25; sector += 2) {
-        if (copy_sector(fp, 1, sector, &destination) < 0)
-            goto read_error;
-        copied++;
-    }
-    for (sector = 2; sector <= 26; sector += 2) {
+    for (sector = 1; sector <= 26; sector++) {
         if (copy_sector(fp, 1, sector, &destination) < 0)
             goto read_error;
         copied++;
@@ -171,7 +161,7 @@ void target_fdcplus_bootstrap_init(void)
 
     fprintf(stderr,
             "target-fdcplus-bootstrap: loaded %u CP/M system sectors at %04XH-%04XH from drive 0\n",
-            copied, parse_load_base(), destination - 1u);
+            copied, load_base, destination - 1u);
     return;
 
 read_error:
