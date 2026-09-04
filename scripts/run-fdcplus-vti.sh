@@ -63,7 +63,8 @@ export TARGET_VTI_ENABLE=1
 export TARGET_VTI_BASE=0xfc00
 export TARGET_VTI_SCREEN="$VTI_SCREEN"
 export TARGET_VTI_KBD="$VTI_KBD"
-export TARGET_VTI_IRQ=2
+# VTI JMP2 -> S-100 VI2. The North Star ZPB supplies RST 2 on INTA.
+export TARGET_VTI_VI=2
 export TARGET_FP_PORT="$FP_PORT"
 if [[ -n "$FP_FILE" ]]; then
     export TARGET_FP_FILE="$FP_FILE"
