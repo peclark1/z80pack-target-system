@@ -263,7 +263,7 @@ class VtiDisplay(_core.Gtk.Frame):
 
     def __init__(self):
         super().__init__()
-        self.set_label("Polymorphic VTI — 64x16 · click display to type")
+        self.set_label("Polymorphic VTI Console — 64x16 · click display to type")
         self.screen = bytes([0xA0]) * VTI_SIZE
 
         self.area = _core.Gtk.DrawingArea()
@@ -524,17 +524,25 @@ class TargetSimWindow(_BaseTargetSimWindow):
         settings.insert_child_after(self.dsi_revealer, selector_box)
         settings.insert_child_after(self.fdcplus_revealer, self.dsi_revealer)
 
-        # The VTI display shares the right pane with the normal Console I/O
-        # terminal. Historical VTI software writes directly to its 1 KB memory
-        # window, so this view updates independently of serial console output.
+        # The VTI is the complete operator console in FDC+ VTI mode: display
+        # RAM and George Risk keyboard both terminate on the card. Keep the VTE
+        # terminal as an optional emulator log instead of a second console.
         self.vti_display = VtiDisplay()
         self.vti_revealer = _core.Gtk.Revealer()
         self.vti_revealer.set_transition_type(_core.Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.vti_revealer.set_child(self.vti_display)
+
+        self.diagnostics_toggle = _core.Gtk.CheckButton(label="Show emulator log")
+        self.diagnostics_toggle.set_tooltip_text(
+            "Show targetsim diagnostics and trace output below the VTI console."
+        )
+        self.diagnostics_toggle.connect("toggled", self._diagnostics_toggled)
+
         main_paned = _find_main_paned(self)
         terminal_box = main_paned.get_end_child() if main_paned is not None else None
         if isinstance(terminal_box, _core.Gtk.Box):
             terminal_box.insert_child_after(self.vti_revealer, self.command)
+            terminal_box.insert_child_after(self.diagnostics_toggle, self.vti_revealer)
 
         # GTK recommends get/set_default_size() for persistent window sizing;
         # it retains the normal (unmaximized) dimensions as the user resizes.
@@ -622,6 +630,34 @@ class TargetSimWindow(_BaseTargetSimWindow):
             )
         return config
 
+    def _diagnostics_toggled(self, *_args) -> None:
+        self._update_console_surface()
+        if self.diagnostics_toggle.get_active() and self.terminal.get_visible():
+            self.terminal.grab_focus()
+        elif self.vti_display.get_visible():
+            self.vti_display.area.grab_focus()
+
+    def _update_console_surface(self) -> None:
+        if not hasattr(self, "vti_revealer"):
+            return
+
+        profile = self._selected_profile()
+        fdcplus_vti_mode = profile == PROFILE_FDCPLUS_VTI
+        vti_mode = profile in {PROFILE_DSI_VTI, PROFILE_FDCPLUS_VTI}
+        show_log = not fdcplus_vti_mode or self.diagnostics_toggle.get_active()
+
+        self.vti_revealer.set_reveal_child(vti_mode)
+        self.diagnostics_toggle.set_visible(fdcplus_vti_mode)
+        self.status.set_visible(show_log)
+        self.command.set_visible(show_log)
+        self.terminal.set_visible(show_log)
+
+        # In the dedicated FDC+ mode the VTI should occupy the right pane like
+        # a single physical keyboard/display console. DSI+VTI retains the old
+        # split presentation because its serial console is still meaningful.
+        self.vti_display.set_vexpand(fdcplus_vti_mode)
+        self.vti_display.area.set_vexpand(fdcplus_vti_mode)
+
     def _profile_changed(self, *_args):
         if self.initializing:
             return
@@ -666,16 +702,21 @@ class TargetSimWindow(_BaseTargetSimWindow):
             self.fdcplus_trace.set_sensitive(fdcplus_enabled)
 
         if hasattr(self, "vti_revealer"):
-            self.vti_revealer.set_reveal_child(
-                profile in {PROFILE_DSI_VTI, PROFILE_FDCPLUS_VTI}
-            )
+            self._update_console_surface()
 
         self._controls_changed()
 
     def _spawn_finished(self, terminal, pid, error, user_data=None):
         result = super()._spawn_finished(terminal, pid, error, user_data)
         if error is None and pid and pid > 0 and self.session_is_emulator:
-            self.terminal.grab_focus()
+            if (
+                self._selected_profile() == PROFILE_FDCPLUS_VTI
+                and hasattr(self, "vti_display")
+                and not self.diagnostics_toggle.get_active()
+            ):
+                self.vti_display.area.grab_focus()
+            else:
+                self.terminal.grab_focus()
         return result
 
     def _capture_window_state(self) -> WindowState:
