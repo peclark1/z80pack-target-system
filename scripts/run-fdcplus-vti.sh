@@ -32,7 +32,7 @@ for arg in "$@"; do
 done
 
 if [[ -z "$FDCPLUS0" || ! -f "$FDCPLUS0" ]]; then
-    echo 'error: FDC+ VTI profile requires FDCPLUS0=<63K CP/M IBM-3740 image>' >&2
+    echo 'error: FDC+ VTI profile requires FDCPLUS0=<62K CP/M IBM-3740 image>' >&2
     exit 2
 fi
 
@@ -43,8 +43,8 @@ if [[ "$size" != 256256 ]]; then
 fi
 
 # This profile is still under active emulator development. Prepare the target
-# overlay explicitly so changes to the new VTI/bootstrap sources cannot be
-# hidden behind the normal incremental-build stamp.
+# overlay explicitly so changes to the VTI/bootstrap sources cannot be hidden
+# behind the normal incremental-build stamp.
 bash "$ROOT/scripts/prepare-targetsim.sh" >/dev/null
 make -C "$TARGET_DIR/srcsim" FRONTPANEL=NO INFOPANEL=NO build >/dev/null
 
@@ -58,7 +58,8 @@ export TARGET_FDCPLUS0="$(realpath "$FDCPLUS0")"
 export TARGET_FDCPLUS_TRACE="$FDCPLUS_TRACE"
 export TARGET_FDCPLUS_WRITE="$FDCPLUS_WRITE"
 export TARGET_FDCPLUS_CPM_BOOTSTRAP=1
-export TARGET_FDCPLUS_CPM_LOAD=0xe200
+# MOVCPM 62 * layout: CCP DE00H, BDOS E600H, BIOS F400H-F77FH.
+export TARGET_FDCPLUS_CPM_LOAD=0xde00
 export TARGET_VTI_ENABLE=1
 export TARGET_VTI_BASE=0xfc00
 export TARGET_VTI_SCREEN="$VTI_SCREEN"
