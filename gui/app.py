@@ -17,6 +17,7 @@ from launcher import (
     FLOPPY_NONE,
     PROFILE_DSI_COMPAT,
     PROFILE_DSI_VTI,
+    PROFILE_FDCPLUS_VTI,
     PROFILE_TARGET,
 )
 from rom_image import inspect_rom
@@ -36,18 +37,22 @@ FLOPPY_LABELS = (
     "Altair FDC+ — Type 8 / iCOM 3712",
 )
 FLOPPY_DSI_INDEX = FLOPPY_CHOICES.index(FLOPPY_DSI)
+FLOPPY_FDCPLUS_INDEX = FLOPPY_CHOICES.index(FLOPPY_FDCPLUS)
 
 PROFILE_CHOICES = (
     PROFILE_TARGET,
     PROFILE_DSI_COMPAT,
     PROFILE_DSI_VTI,
+    PROFILE_FDCPLUS_VTI,
 )
 PROFILE_LABELS = (
     "Target System — 60K RAM + 4K ROM",
     "DSI Compatibility — 64K RAM",
     "DSI + Polymorphic VTI — 63K RAM + 1K video",
+    "FDC+ + Polymorphic VTI — 63K RAM / 62K CP/M + 1K video",
 )
 PROFILE_DSI_VTI_INDEX = PROFILE_CHOICES.index(PROFILE_DSI_VTI)
+PROFILE_FDCPLUS_VTI_INDEX = PROFILE_CHOICES.index(PROFILE_FDCPLUS_VTI)
 
 VTI_SCREEN_PATH = _core.REPO_ROOT / "build" / "vti-screen.bin"
 VTI_KEYBOARD_PATH = _core.REPO_ROOT / "build" / "vti-kbd"
@@ -258,7 +263,7 @@ class VtiDisplay(_core.Gtk.Frame):
 
     def __init__(self):
         super().__init__()
-        self.set_label("Polymorphic VTI — 8800H-8BFFH · click display to type")
+        self.set_label("Polymorphic VTI — 64x16 · click display to type")
         self.screen = bytes([0xA0]) * VTI_SIZE
 
         self.area = _core.Gtk.DrawingArea()
@@ -561,9 +566,12 @@ class TargetSimWindow(_BaseTargetSimWindow):
         return PROFILE_TARGET
 
     def _effective_floppy_index(self) -> int:
-        if self._selected_profile() != PROFILE_TARGET:
-            return FLOPPY_DSI_INDEX
-        return int(self.floppy_controller.get_selected())
+        profile = self._selected_profile()
+        if profile == PROFILE_TARGET:
+            return int(self.floppy_controller.get_selected())
+        if profile == PROFILE_FDCPLUS_VTI:
+            return FLOPPY_FDCPLUS_INDEX
+        return FLOPPY_DSI_INDEX
 
     def _update_floppy_visibility(self) -> None:
         if not hasattr(self, "dsi_revealer"):
@@ -620,14 +628,19 @@ class TargetSimWindow(_BaseTargetSimWindow):
 
         profile = self._selected_profile()
         target_mode = profile == PROFILE_TARGET
+        dsi_mode = profile in {PROFILE_DSI_COMPAT, PROFILE_DSI_VTI}
+        fdcplus_vti_mode = profile == PROFILE_FDCPLUS_VTI
 
         self.cf0.set_sensitive(target_mode)
         self.cf1.set_sensitive(target_mode)
         self.ide_trace.set_sensitive(target_mode)
         if target_mode:
             self.dsi_bootstrap.set_sensitive(True)
-        else:
+        elif dsi_mode:
             self.dsi_bootstrap.set_active(True)
+            self.dsi_bootstrap.set_sensitive(False)
+        else:
+            self.dsi_bootstrap.set_active(False)
             self.dsi_bootstrap.set_sensitive(False)
 
         if hasattr(self, "rom_row"):
@@ -635,19 +648,27 @@ class TargetSimWindow(_BaseTargetSimWindow):
 
         if hasattr(self, "floppy_controller"):
             self.floppy_controller.set_sensitive(target_mode)
-            desired = self._target_floppy_selection if target_mode else FLOPPY_DSI_INDEX
+            if target_mode:
+                desired = self._target_floppy_selection
+            elif fdcplus_vti_mode:
+                desired = FLOPPY_FDCPLUS_INDEX
+            else:
+                desired = FLOPPY_DSI_INDEX
             if self.floppy_controller.get_selected() != desired:
                 self.floppy_controller.set_selected(desired)
             self._update_floppy_visibility()
 
         if hasattr(self, "fdcplus_rows"):
+            fdcplus_enabled = target_mode or fdcplus_vti_mode
             for row in self.fdcplus_rows:
-                row.set_sensitive(target_mode)
-            self.fdcplus_write.set_sensitive(target_mode)
-            self.fdcplus_trace.set_sensitive(target_mode)
+                row.set_sensitive(fdcplus_enabled)
+            self.fdcplus_write.set_sensitive(fdcplus_enabled)
+            self.fdcplus_trace.set_sensitive(fdcplus_enabled)
 
         if hasattr(self, "vti_revealer"):
-            self.vti_revealer.set_reveal_child(profile == PROFILE_DSI_VTI)
+            self.vti_revealer.set_reveal_child(
+                profile in {PROFILE_DSI_VTI, PROFILE_FDCPLUS_VTI}
+            )
 
         self._controls_changed()
 
