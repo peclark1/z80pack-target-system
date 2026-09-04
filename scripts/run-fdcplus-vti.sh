@@ -42,11 +42,11 @@ if [[ "$size" != 256256 ]]; then
     exit 2
 fi
 
-# This profile is still under active emulator development. Prepare the target
-# overlay explicitly so changes to the VTI/bootstrap sources cannot be hidden
-# behind the normal incremental-build stamp.
-bash "$ROOT/scripts/prepare-targetsim.sh" >/dev/null
-make -C "$TARGET_DIR/srcsim" FRONTPANEL=NO INFOPANEL=NO build >/dev/null
+# Use the repository's dependency-tracked targetsim build. If none of the
+# emulator sources/configs changed, this is a no-op and Start proceeds almost
+# immediately. When a tracked backend input did change, Make refreshes the
+# generated target overlay and rebuilds targetsim once before launching.
+make -C "$ROOT" build >/dev/null
 
 mkdir -p "$ROOT/build"
 VTI_SCREEN="$ROOT/build/vti-screen.bin"
