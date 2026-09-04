@@ -20,6 +20,7 @@
 #include <strings.h>
 
 #include "sim.h"
+#include "simglb.h"
 #include "simmem.h"
 #include "target-fdcplus-bootstrap.h"
 
