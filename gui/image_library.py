@@ -393,6 +393,13 @@ class ImageLibrary:
         with self._connect() as db:
             db.execute("UPDATE work_copies SET note = ? WHERE id = ?", (note.strip(), work_id))
 
+    def delete_work_copy(self, work_id: int, *, delete_file: bool = False) -> None:
+        work = self.get_work_copy(work_id)
+        if delete_file and work.path.is_file():
+            work.path.unlink()
+        with self._connect() as db:
+            db.execute("DELETE FROM work_copies WHERE id = ?", (work_id,))
+
     def untracked_work_images(self, media_type: str | None = None) -> list[Path]:
         build = self.repo_root / "build"
         if not build.is_dir():
