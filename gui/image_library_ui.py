@@ -72,6 +72,12 @@ def begin_managed_work_copy(row):
 
     library = ImageLibrary(Path(__file__).resolve().parents[1])
     parent = row.get_root()
+    if source in library.untracked_work_images(media_type(row)):
+        row.info.set_text(
+            "This is an untracked working copy. Use Library… to link it to its master or reuse it."
+        )
+        open_library_for_row(row)
+        return
     master = library.master_for_path(source)
     if master:
         _create_first_copy(row, library, master, parent)
