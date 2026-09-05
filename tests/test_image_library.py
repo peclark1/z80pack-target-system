@@ -87,6 +87,23 @@ class ImageLibraryTests(unittest.TestCase):
             self.assertEqual(library.untracked_work_images("cf"), [untracked.resolve()])
             self.assertEqual(library.untracked_work_images("floppy"), [])
 
+    def test_delete_work_copy_can_remove_file_and_catalog_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "master.img"
+            source.write_bytes(b"master")
+            work = root / "build" / "cf0-gui-work.img"
+            work.parent.mkdir()
+            work.write_bytes(b"working")
+            library = ImageLibrary(root)
+            master = library.add_master(source, "cf")
+            record = library.register_work_copy(master.id, work)
+
+            library.delete_work_copy(record.id, delete_file=True)
+
+            self.assertFalse(work.exists())
+            self.assertEqual(library.list_work_copies(master.id), [])
+
     def test_database_paths_are_portable_inside_repo(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
