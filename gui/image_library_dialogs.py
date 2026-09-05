@@ -24,19 +24,36 @@ PROFILE_NAMES = {
 
 
 def profile_name(value: str) -> str:
-    return PROFILE_NAMES.get(value, value or "Unspecified")
+    if not value:
+        return "Unspecified"
+    base, separator, detail = value.partition(" / ")
+    friendly = PROFILE_NAMES.get(base, base)
+    return f"{friendly} / {detail}" if separator else friendly
 
 
 def profile_for_row(row) -> str:
     root = row.get_root()
     selector = getattr(root, "_selected_profile", None) if root else None
+    base = ""
     if callable(selector):
         try:
-            return selector() or ""
+            base = selector() or ""
         except Exception:
             pass
-    config = getattr(root, "config", None) if root else None
-    return getattr(config, "profile", "") if config else ""
+    if not base:
+        config = getattr(root, "config", None) if root else None
+        base = getattr(config, "profile", "") if config else ""
+
+    title = getattr(row, "title", "")
+    if title.startswith("CF"):
+        detail = "IDE/CF"
+    elif title.startswith("DSI"):
+        detail = "DSI FDC-1"
+    elif title.startswith("FDC+"):
+        detail = "FDC+ Type 8"
+    else:
+        detail = ""
+    return " / ".join(part for part in (base, detail) if part)
 
 
 def media_type(row) -> str:
