@@ -108,6 +108,20 @@ class ImageLibrary:
                     ON work_copies(master_id);
                 """
             )
+            rows = db.execute("SELECT path FROM master_images").fetchall()
+        for row in rows:
+            path = self._load_path(row["path"])
+            if path.is_file():
+                self._protect_master(path)
+
+    def _protect_master(self, path: Path) -> None:
+        """Remove write bits from masters stored inside the private library."""
+        try:
+            path.resolve().relative_to(self.master_root.resolve())
+        except ValueError:
+            return
+        mode = path.stat().st_mode
+        path.chmod(mode & ~0o222)
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database_path)
@@ -198,12 +212,14 @@ class ImageLibrary:
             ).fetchone()
             if row is not None:
                 master = self._master_from_row(row)
-                self.update_master(
-                    master.id,
-                    profile=profile or master.profile,
-                    description=description or master.description,
-                )
-                return self.get_master(master.id)
+                if master.path.is_file():
+                    self._protect_master(master.path)
+                    self.update_master(
+                        master.id,
+                        profile=profile or master.profile,
+                        description=description or master.description,
+                    )
+                    return self.get_master(master.id)
 
         if copy_into_library:
             try:
@@ -215,6 +231,7 @@ class ImageLibrary:
         else:
             destination = source_path
 
+        self._protect_master(destination)
         now = _utc_now()
         stored_path = self._store_path(destination)
         size = destination.stat().st_size
