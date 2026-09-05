@@ -297,8 +297,8 @@ class ImageLibrary:
             clauses.append("media_type = ?")
             params.append(self._validate_media_type(media_type))
         if profile:
-            clauses.append("profile = ?")
-            params.append(profile.strip())
+            clauses.append("profile LIKE ?")
+            params.append(f"%{profile.strip()}%")
         term = search.strip()
         if term:
             clauses.append("(filename LIKE ? OR profile LIKE ? OR description LIKE ?)")
