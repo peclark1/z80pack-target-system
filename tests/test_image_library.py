@@ -29,6 +29,7 @@ class ImageLibraryTests(unittest.TestCase):
             self.assertEqual(master.path.read_bytes(), source.read_bytes())
             self.assertEqual(master.profile, "target")
             self.assertEqual(master.description, "CP/M 3 IDE master")
+            self.assertEqual(master.path.stat().st_mode & 0o222, 0)
             self.assertTrue((root / "disks" / "library" / "library.db").is_file())
 
     def test_identical_master_is_reused(self):
