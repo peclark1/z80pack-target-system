@@ -393,6 +393,24 @@ class ImageLibrary:
         with self._connect() as db:
             db.execute("UPDATE work_copies SET note = ? WHERE id = ?", (note.strip(), work_id))
 
+    def touch_launch_arguments(self, argv: Iterable[str]) -> None:
+        """Mark managed media that are actually attached to an emulator launch."""
+        media_names = {
+            "CF0", "CF1", "DSI0", "DSI1",
+            "FDCPLUS0", "FDCPLUS1", "FDCPLUS2", "FDCPLUS3",
+        }
+        for item in argv:
+            name, separator, value = item.partition("=")
+            if not separator or name not in media_names or not value:
+                continue
+            work = self.work_copy_for_path(value)
+            if work is not None:
+                self.touch_work_copy(work.id)
+                continue
+            master = self.master_for_path(value)
+            if master is not None:
+                self.touch_master(master.id)
+
     def delete_work_copy(self, work_id: int, *, delete_file: bool = False) -> None:
         work = self.get_work_copy(work_id)
         if delete_file and work.path.is_file():
