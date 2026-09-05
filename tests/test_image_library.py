@@ -87,6 +87,29 @@ class ImageLibraryTests(unittest.TestCase):
             self.assertEqual(library.untracked_work_images("cf"), [untracked.resolve()])
             self.assertEqual(library.untracked_work_images("floppy"), [])
 
+    def test_launch_arguments_touch_only_attached_managed_media(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "master.img"
+            source.write_bytes(b"master")
+            work = root / "build" / "cf0-gui-work.img"
+            work.parent.mkdir()
+            work.write_bytes(b"working")
+            library = ImageLibrary(root)
+            master = library.add_master(source, "cf")
+            record = library.register_work_copy(master.id, work)
+
+            import sqlite3
+            old = "2000-01-01T00:00:00+00:00"
+            with sqlite3.connect(library.database_path) as db:
+                db.execute("UPDATE master_images SET last_used = ? WHERE id = ?", (old, master.id))
+                db.execute("UPDATE work_copies SET last_used = ? WHERE id = ?", (old, record.id))
+
+            library.touch_launch_arguments([f"CF0={work}", "CF1=", "IDE_TRACE=0"])
+
+            self.assertNotEqual(library.get_work_copy(record.id).last_used, old)
+            self.assertNotEqual(library.get_master(master.id).last_used, old)
+
     def test_delete_work_copy_can_remove_file_and_catalog_record(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
