@@ -14,11 +14,11 @@ disks/library/
         floppy/
 ```
 
-The entire `disks/library/` tree is ignored by Git. It is meant for personal images prepared for this emulator, not for archival copies of real media.
+The entire `disks/library/` tree is ignored by Git. It is meant for personal images prepared for this emulator, not for archival copies of real media. Masters stored in the library are made read-only so selecting a master directly cannot accidentally modify the known-good copy; normal experiments should use a managed working copy.
 
-The GUI's **Library…** button lets you add a master image with a profile and description, browse masters, and see the working copies derived from each master. **Work Copy** records that lineage instead of creating anonymous copies. If a master already has working copies, the library view lets you reuse one or explicitly create another. Existing `build/*work*.img` files that predate the library appear as **untracked** and can be linked to a selected master once their origin is known.
+The GUI's **Library…** button lets you add a master image with a profile and description, browse masters, and see the working copies derived from each master. **Work Copy** records that lineage instead of creating anonymous copies. If a master already has working copies, the library view lets you reuse one or explicitly create another. Existing `build/*work*.img` files that predate the library appear as **untracked** and can be used as-is or linked to a selected master once their origin is known.
 
-**Reset from Master** restores a managed working copy from its master while preserving the working filename and its catalog record. CF resets continue to use the normal 8 MiB work-copy preparation logic; floppy resets are direct copies.
+**Reset from Master** restores a managed working copy from its master while preserving the working filename and its catalog record. CF resets continue to use the normal 8 MiB work-copy preparation logic; floppy resets are direct copies. **Delete Copy** removes an unwanted working image without touching its master.
 
 Master paths and work-copy paths inside this checkout are stored relative to the repository root so the catalog stays portable if the checkout is moved.
 
