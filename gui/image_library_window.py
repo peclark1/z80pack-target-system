@@ -134,9 +134,16 @@ class LibraryWindow(Gtk.Window):
         for name in ("top", "bottom", "start", "end"):
             getattr(box, f"set_margin_{name}")(5)
         box.append(Gtk.Label(label=text, xalign=0))
-        note = Gtk.Label(label=work.note or f"Created {work.created_at}", xalign=0, wrap=True)
-        note.add_css_class("dim-label")
-        box.append(note)
+        if work.note:
+            note = Gtk.Label(label=work.note, xalign=0, wrap=True)
+            box.append(note)
+        activity = Gtk.Label(
+            label=f"Created {work.created_at} · Last used {work.last_used or 'never'}",
+            xalign=0,
+            wrap=True,
+        )
+        activity.add_css_class("dim-label")
+        box.append(activity)
         row.set_child(box)
         return row
 
@@ -217,7 +224,7 @@ class LibraryWindow(Gtk.Window):
         self.use_master.set_sensitive(bool(master and master.path.is_file()))
         self.edit.set_sensitive(master is not None)
         self.create.set_sensitive(bool(master and master.path.is_file() and self.row.work_copy))
-        self.use_work.set_sensitive(bool(work and work.exists))
+        self.use_work.set_sensitive(bool((work and work.exists) or (untracked and untracked.is_file())))
         self.reset.set_sensitive(bool(master and work and master.path.is_file()))
         self.link.set_sensitive(bool(master and untracked))
 
@@ -236,6 +243,10 @@ class LibraryWindow(Gtk.Window):
         if work and work.exists:
             self.library.touch_work_copy(work.id)
             self._select(work.path)
+            return
+        untracked = self._untracked()
+        if untracked and untracked.is_file():
+            self._select(untracked)
 
     def _create_work(self, _button):
         master = self._master()
