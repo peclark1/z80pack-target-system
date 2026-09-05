@@ -70,7 +70,7 @@ class LibraryWindow(Gtk.Window):
         self.details = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
         right.append(self.details)
         mbuttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-        self.use_master = self._button(mbuttons, "Use Master", self._use_master)
+        self.use_master = self._button(mbuttons, "Use Master (read-only)", self._use_master)
         self.edit = self._button(mbuttons, "Edit Metadata", self._edit)
         self.create = self._button(mbuttons, "Create Work Copy", self._create_work)
         right.append(mbuttons)
@@ -86,6 +86,7 @@ class LibraryWindow(Gtk.Window):
         wbuttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         self.use_work = self._button(wbuttons, "Use Selected", self._use_work)
         self.reset = self._button(wbuttons, "Reset from Master", self._reset)
+        self.delete = self._button(wbuttons, "Delete Copy", self._delete)
         self.link = self._button(wbuttons, "Link Untracked", self._link)
         right.append(wbuttons)
         close = Gtk.Button(label="Close", halign=Gtk.Align.END)
@@ -226,6 +227,7 @@ class LibraryWindow(Gtk.Window):
         self.create.set_sensitive(bool(master and master.path.is_file() and self.row.work_copy))
         self.use_work.set_sensitive(bool((work and work.exists) or (untracked and untracked.is_file())))
         self.reset.set_sensitive(bool(master and work and master.path.is_file()))
+        self.delete.set_sensitive(bool(work or untracked))
         self.link.set_sensitive(bool(master and untracked))
 
     def _select(self, path):
@@ -297,6 +299,50 @@ class LibraryWindow(Gtk.Window):
             return
         self._refresh_works(master)
         self.row.refresh_info()
+
+    def _delete(self, _button):
+        work, untracked = self._work(), self._untracked()
+        path = work.path if work else untracked
+        if not path:
+            return
+        alert = Gtk.AlertDialog(
+            message=f"Delete working copy {path.name}?",
+            detail=(
+                "The working image file will be deleted. The master image is not changed."
+                if path.is_file()
+                else "The file is already missing; its catalog record will be removed."
+            ),
+            buttons=["Cancel", "Delete"],
+            cancel_button=0,
+            default_button=0,
+        )
+        alert.choose(self, None, self._delete_done, (work, untracked))
+
+    def _delete_done(self, alert, result, data):
+        try:
+            if alert.choose_finish(result) != 1:
+                return
+        except GLib.Error:
+            return
+        work, untracked = data
+        path = work.path if work else untracked
+        master = self._master()
+        try:
+            if work:
+                self.library.delete_work_copy(work.id, delete_file=True)
+            elif untracked and untracked.is_file():
+                untracked.unlink()
+        except OSError as exc:
+            show_error(self.parent, f"Could not delete working copy: {exc}")
+            return
+        try:
+            current = Path(self.row.get_path()).expanduser().resolve()
+        except (OSError, RuntimeError):
+            current = None
+        if current == path:
+            self.row.set_path(str(master.path) if master and master.path.is_file() else "")
+        self._refresh_works(master)
+        self._buttons()
 
     def _link(self, _button):
         master, path = self._master(), self._untracked()
