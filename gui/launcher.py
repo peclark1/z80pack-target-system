@@ -61,7 +61,7 @@ class LaunchConfig:
     dsi_write: bool = False
     dsi_bootstrap: bool = False
     fdcplus_trace: bool = False
-    fdcplus_write: bool = False
+    fdcplus_write: bool = True
     fp_port: str = "00"
     cpu_mhz: int = 4
 
@@ -210,8 +210,11 @@ class LaunchConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        # DSI remains conservative because these are often archival images.
+        # FDC+ is the normal writable working-disk path, so fresh GUI sessions
+        # intentionally come back writable even if the prior session opted out.
         value["dsi_write"] = False
-        value["fdcplus_write"] = False
+        value["fdcplus_write"] = True
         return value
 
     @classmethod
@@ -228,7 +231,7 @@ class LaunchConfig:
                 config.floppy_controller = FLOPPY_NONE
 
         config.dsi_write = False
-        config.fdcplus_write = False
+        config.fdcplus_write = True
         return config
 
 

@@ -18,6 +18,9 @@ from gui.rom_image import ROM_SIZE
 
 
 class GuiLauncherTests(unittest.TestCase):
+    def test_fdcplus_writes_default_on(self):
+        self.assertTrue(LaunchConfig().fdcplus_write)
+
     def test_target_fdcplus_command_suppresses_dsi(self):
         cfg = LaunchConfig(
             profile=PROFILE_TARGET,
@@ -52,6 +55,15 @@ class GuiLauncherTests(unittest.TestCase):
         self.assertIn("FDCPLUS_WRITE=1", argv)
         self.assertIn("FP_PORT=02", argv)
         self.assertIn("CPU_MHZ=8", argv)
+
+    def test_fdcplus_write_can_be_disabled_for_current_launch(self):
+        cfg = LaunchConfig(
+            profile=PROFILE_TARGET,
+            floppy_controller=FLOPPY_FDCPLUS,
+            fdcplus_write=False,
+        )
+        argv = cfg.make_argv(Path("/repo"))
+        self.assertIn("FDCPLUS_WRITE=0", argv)
 
     def test_target_dsi_command_suppresses_fdcplus(self):
         cfg = LaunchConfig(
@@ -169,7 +181,7 @@ class GuiLauncherTests(unittest.TestCase):
             )
             self.assertTrue(any("ROM image" in error for error in cfg.validate()))
 
-    def test_settings_round_trip_but_write_authorizations_reset(self):
+    def test_settings_round_trip_resets_dsi_write_and_defaults_fdcplus_write_on(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gui.json"
             cfg = LaunchConfig(
@@ -181,7 +193,7 @@ class GuiLauncherTests(unittest.TestCase):
                 cpu_mhz=6,
                 dsi_write=True,
                 fdcplus_trace=True,
-                fdcplus_write=True,
+                fdcplus_write=False,
             )
             save_config(cfg, path)
             loaded = load_config(path)
@@ -193,8 +205,8 @@ class GuiLauncherTests(unittest.TestCase):
             self.assertEqual(loaded.cpu_mhz, 6)
             self.assertTrue(loaded.fdcplus_trace)
             self.assertFalse(loaded.dsi_write)
-            self.assertFalse(loaded.fdcplus_write)
-            self.assertFalse(load_config(path).fdcplus_write)
+            self.assertTrue(loaded.fdcplus_write)
+            self.assertTrue(load_config(path).fdcplus_write)
 
     def test_old_settings_infer_fdcplus_controller(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -203,7 +215,9 @@ class GuiLauncherTests(unittest.TestCase):
                 json.dumps({"profile": PROFILE_TARGET, "fdcplus0": "disk.img"}),
                 encoding="utf-8",
             )
-            self.assertEqual(load_config(path).floppy_controller, FLOPPY_FDCPLUS)
+            loaded = load_config(path)
+            self.assertEqual(loaded.floppy_controller, FLOPPY_FDCPLUS)
+            self.assertTrue(loaded.fdcplus_write)
 
     def test_old_settings_infer_dsi_controller(self):
         with tempfile.TemporaryDirectory() as directory:
