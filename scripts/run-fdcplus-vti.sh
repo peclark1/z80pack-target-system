@@ -81,6 +81,19 @@ mkdir -p "$ROOT/build"
 VTI_SCREEN="$ROOT/build/vti-screen.bin"
 VTI_KBD="$ROOT/build/vti-kbd"
 
+# Preserve every FDC+/VTI diagnostic/trace run on disk while still displaying
+# it in the VTE terminal.  targetsim emits controller traces and unsupported
+# command diagnostics on stderr, so teeing only stderr keeps the emulator's
+# normal terminal/PTY semantics unchanged.  Keep timestamped history and a
+# stable symlink for quick grep/open operations from the GUI.
+LOG_DIR="$ROOT/build/logs"
+mkdir -p "$LOG_DIR"
+LOG_STAMP=$(date +%Y%m%d-%H%M%S)
+TARGETSIM_LOG="$LOG_DIR/targetsim-$LOG_STAMP.log"
+ln -sfn "$(basename "$TARGETSIM_LOG")" "$LOG_DIR/targetsim-latest.log"
+exec 2> >(tee -a "$TARGETSIM_LOG" >&2)
+echo "targetsim diagnostics log: $TARGETSIM_LOG" >&2
+
 export TARGET_CONSOLE=cio
 export TARGET_HEADTEST_ENABLE=0
 export TARGET_FDCPLUS0="$(realpath "$FDCPLUS0")"
