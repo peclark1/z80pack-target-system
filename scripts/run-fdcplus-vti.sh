@@ -11,7 +11,7 @@ FDCPLUS1=""
 FDCPLUS2=""
 FDCPLUS3=""
 FDCPLUS_TRACE=0
-FDCPLUS_WRITE=0
+FDCPLUS_WRITE=1
 FP_PORT=00
 FP_FILE=""
 CPU_MHZ=4
@@ -41,6 +41,23 @@ size=$(stat -c %s "$FDCPLUS0")
 if [[ "$size" != 256256 ]]; then
     echo "error: FDCPLUS0 must be a 256256-byte 77x26x128 IBM-3740 image (got $size)" >&2
     exit 2
+fi
+
+# Work Copy uses metadata-preserving copies, so a copy made from a protected
+# master image may inherit read-only mode bits. When writes are requested,
+# make only emulator-managed work images under build/ owner-writable. Never
+# change permissions on a master image selected from elsewhere.
+if [[ "$FDCPLUS_WRITE" != 0 ]]; then
+    for image in "$FDCPLUS0" "$FDCPLUS1" "$FDCPLUS2" "$FDCPLUS3"; do
+        [[ -n "$image" && -f "$image" ]] || continue
+        resolved=$(realpath "$image")
+        case "$resolved" in
+            "$ROOT"/build/*) chmod u+w "$resolved" ;;
+        esac
+        if [[ ! -w "$resolved" ]]; then
+            echo "warning: FDC+ writes requested but image is not writable: $resolved" >&2
+        fi
+    done
 fi
 
 # Use the repository's dependency-tracked targetsim build. The dedicated VTI
