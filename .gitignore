@@ -8,4 +8,6 @@ rom/*.hex
 disks/*.img
 disks/*.dsk
 disks/*.imd
+# Emulator-only master image library and its SQLite metadata are private/local.
+disks/library/
 cpm3/build/

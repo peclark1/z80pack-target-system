@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "gui"))
 
 import app as target_gui  # noqa: E402
+from image_library_dialogs import MetadataDialog  # noqa: E402
+from image_library_window import LibraryWindow  # noqa: E402
 from rom_image import ROM_SIZE  # noqa: E402
 
 
@@ -96,6 +98,28 @@ def main() -> None:
     if dialog.get_title() != "Disk-image browse smoke test":
         raise RuntimeError("Gtk.FileDialog could not be constructed/configured")
 
+    # Construct the managed image-library UI using the real GTK runtime. This
+    # verifies the wrapper installed ManagedImageRow for ordinary CF selectors,
+    # and catches GTK property/API issues in the new browser and metadata dialog.
+    if window.cf0.__class__.__name__ != "ManagedImageRow":
+        raise RuntimeError(f"CF0 is not using ManagedImageRow: {type(window.cf0)!r}")
+    library_window = LibraryWindow(window.cf0)
+    if library_window.media_type != "cf":
+        raise RuntimeError("CF image library opened with the wrong media type")
+    if "read-only" not in (library_window.use_master.get_label() or ""):
+        raise RuntimeError("image library does not identify masters as read-only")
+    metadata = MetadataDialog(
+        window,
+        filename="smoke.img",
+        media_type="cf",
+        profile="target / IDE/CF",
+        description="GUI smoke-test image",
+    )
+    if metadata.profile.get_text() != "target / IDE/CF":
+        raise RuntimeError("image metadata dialog did not preserve the profile")
+    metadata.destroy()
+    library_window.destroy()
+
     # Exercise the exact Vte.Terminal.spawn_async() call used by Start/Build.
     window._spawn(
         ["/bin/sh", "-c", "printf 'VTE SPAWN OK\\n'"],
@@ -127,7 +151,10 @@ def main() -> None:
 
     window.destroy()
     application.quit()
-    print("GTK GUI smoke test passed: visible ROM selector, switches, FileDialog, VTE spawn, and Stop all work")
+    print(
+        "GTK GUI smoke test passed: ROM selector, switches, image library, "
+        "FileDialog, VTE spawn, and Stop all work"
+    )
 
 
 if __name__ == "__main__":
