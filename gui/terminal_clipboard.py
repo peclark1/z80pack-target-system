@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Terminal clipboard integration for the GTK4/VTE emulator window."""
+"""Terminal clipboard and key-binding integration for the GTK4/VTE emulator window."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ PASTE_ACCEL = "<Primary><Shift>v"
 
 
 def install_terminal_clipboard(window_class) -> None:
-    """Add copy/paste actions, shortcuts, and a VTE context menu to a window class.
+    """Add copy/paste actions, shortcuts, and VTE terminal key bindings.
 
     The accelerator choices deliberately leave plain Ctrl-C and Ctrl-V alone so
     CP/M and other guest software continue to receive normal control characters.
@@ -34,6 +34,13 @@ def _install_on_window(window) -> None:
     terminal = getattr(window, "terminal", None)
     if terminal is None:
         return
+
+    # Do not leave Backspace on VTE's AUTO binding. AUTO may inherit the PTY's
+    # erase character, which is DEL (0x7f) in our targetsim session and triggers
+    # CP/M's teletype-style RUBOUT echo. Force normal CRT editing instead:
+    # Backspace sends Ctrl-H (0x08), while the Delete key remains DEL (0x7f).
+    terminal.set_backspace_binding(Vte.EraseBinding.ASCII_BACKSPACE)
+    terminal.set_delete_binding(Vte.EraseBinding.ASCII_DELETE)
 
     copy_action = Gio.SimpleAction.new(COPY_ACTION, None)
     paste_action = Gio.SimpleAction.new(PASTE_ACTION, None)
