@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the FDC+ Type 8 FD3712 command/FIFO protocol in targetsim."""
+"""Exercise the FDC+ Type 8 FD3712 command/FIFO and format protocols."""
 
 from __future__ import annotations
 
@@ -11,13 +11,18 @@ import sys
 
 SUCCESS_TEXT = "FDCPLUS8 OK"
 READ_TRACE = "target-fdcplus8: drive=0 READ track=0 sector=1"
+FORMAT_TRACE = "target-fdcplus8: drive=0 FORMAT track=2 sectors=1-26"
+SECTORS_PER_TRACK = 26
+SECTOR_SIZE = 128
+FORMAT_TRACK = 2
+FORMAT_FILL = 0xE5
 
 
 def run(targetsim: Path, config: Path, romdir: Path, disk: Path) -> str:
     env = os.environ.copy()
     env["TARGET_FDCPLUS0"] = str(disk.resolve())
     env["TARGET_FDCPLUS_TRACE"] = "1"
-    env["TARGET_FDCPLUS_WRITE"] = "0"
+    env["TARGET_FDCPLUS_WRITE"] = "1"
     for number in range(1, 4):
         env.pop(f"TARGET_FDCPLUS{number}", None)
     for name in (
@@ -67,6 +72,26 @@ def run(targetsim: Path, config: Path, romdir: Path, disk: Path) -> str:
     return output.decode("utf-8", errors="replace")
 
 
+def verify_formatted_track(disk: Path) -> str | None:
+    image = disk.read_bytes()
+    track_size = SECTORS_PER_TRACK * SECTOR_SIZE
+    start = FORMAT_TRACK * track_size
+    end = start + track_size
+    expected = bytes([FORMAT_FILL]) * track_size
+
+    if image[start:end] != expected:
+        return f"track {FORMAT_TRACK} was not fully filled with {FORMAT_FILL:02X}"
+
+    # The format-mode WRITE must affect exactly the current track. The next
+    # track began as zeroes in make_fdcplus_smoke.py and must remain untouched.
+    next_start = end
+    next_end = next_start + track_size
+    if any(image[next_start:next_end]):
+        return f"track {FORMAT_TRACK + 1} changed during track-format operation"
+
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--targetsim", required=True, type=Path)
@@ -86,17 +111,26 @@ def main() -> None:
     missing = []
     if READ_TRACE not in output:
         missing.append(f"read trace {READ_TRACE!r}")
+    if FORMAT_TRACE not in output:
+        missing.append(f"format trace {FORMAT_TRACE!r}")
     if SUCCESS_TEXT not in output:
         missing.append(f"console output {SUCCESS_TEXT!r}")
 
+    format_error = verify_formatted_track(args.disk)
+    if format_error:
+        missing.append(format_error)
+
     if missing:
         print(
-            "FDC+ Type 8 smoke test failed; missing " + ", ".join(missing),
+            "FDC+ Type 8 smoke test failed; missing/invalid " + ", ".join(missing),
             file=sys.stderr,
         )
         raise SystemExit(1)
 
-    print("FDC+ Type 8 smoke test passed: FD3712 read/FIFO protocol completed")
+    print(
+        "FDC+ Type 8 smoke test passed: FD3712 read/FIFO and FDC+3712 "
+        "track-format protocols completed"
+    )
 
 
 if __name__ == "__main__":
