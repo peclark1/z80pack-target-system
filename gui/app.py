@@ -8,6 +8,7 @@ import core_app as _core
 from managed_image_row import ManagedImageRow
 from image_library import ImageLibrary
 from log_tools import install_log_tools
+from terminal_clipboard import install_terminal_clipboard
 
 # app_base defines the state-preserving GUI and patches core_app.TargetSimWindow.
 # Its window constructors resolve core_app.ImageRow at runtime, so replacing the
@@ -18,6 +19,10 @@ _core.ImageRow = ManagedImageRow
 # Add a scrollable/searchable diagnostics terminal and access to the persisted
 # FDC+/VTI trace log without duplicating app_base's window implementation.
 install_log_tools(_base.TargetSimWindow)
+
+# Add normal desktop-terminal clipboard behavior without consuming CP/M's plain
+# Ctrl-C/Ctrl-V control keys: Ctrl+Shift+C/V plus VTE's right-click menu.
+install_terminal_clipboard(_base.TargetSimWindow)
 
 # Last-used timestamps should reflect an actual emulator launch, not merely a
 # file being highlighted in the library browser. The launch argv contains only
