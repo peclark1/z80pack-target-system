@@ -13,6 +13,7 @@ class GuiSyntaxTests(unittest.TestCase):
             "image_library_dialogs.py",
             "image_library_ui.py",
             "image_library_window.py",
+            "log_tools.py",
             "managed_image_row.py",
         ):
             with self.subTest(name=name):
