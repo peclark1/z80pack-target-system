@@ -20,6 +20,14 @@ class TerminalClipboardSourceTests(unittest.TestCase):
         self.assertIn('menu.append("Copy", f"win.{COPY_ACTION}")', self.source)
         self.assertIn('menu.append("Paste", f"win.{PASTE_ACTION}")', self.source)
 
+    def test_backspace_and_delete_bindings_are_explicit(self):
+        self.assertIn(
+            "set_backspace_binding(Vte.EraseBinding.ASCII_BACKSPACE)", self.source
+        )
+        self.assertIn(
+            "set_delete_binding(Vte.EraseBinding.ASCII_DELETE)", self.source
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
