@@ -15,6 +15,7 @@ class GuiSyntaxTests(unittest.TestCase):
             "image_library_window.py",
             "log_tools.py",
             "managed_image_row.py",
+            "terminal_clipboard.py",
         ):
             with self.subTest(name=name):
                 py_compile.compile(str(root / "gui" / name), doraise=True)
