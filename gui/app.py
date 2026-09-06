@@ -7,12 +7,17 @@ import app_base as _base
 import core_app as _core
 from managed_image_row import ManagedImageRow
 from image_library import ImageLibrary
+from log_tools import install_log_tools
 
 # app_base defines the state-preserving GUI and patches core_app.TargetSimWindow.
 # Its window constructors resolve core_app.ImageRow at runtime, so replacing the
 # row here adds managed media to CF, DSI, and FDC+ selectors without duplicating
 # the profile/VTI implementation.
 _core.ImageRow = ManagedImageRow
+
+# Add a scrollable/searchable diagnostics terminal and access to the persisted
+# FDC+/VTI trace log without duplicating app_base's window implementation.
+install_log_tools(_base.TargetSimWindow)
 
 # Last-used timestamps should reflect an actual emulator launch, not merely a
 # file being highlighted in the library browser. The launch argv contains only

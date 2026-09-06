@@ -54,6 +54,16 @@
 #define CMD_SHIFT_BUFFER            0x41
 #define CMD_RESET                   0x81
 
+/*
+ * FDC+3712 configuration byte as used by Mike Douglas' FORMAT v1.5.
+ * setCfg rotates fmtMode into bit 5 and density into bit 4. Type 8 exposes
+ * the SSSD IBM-3740 profile, so bit 5 is the significant extension here:
+ * a following WRITE formats the entire current track using the 128-byte
+ * controller buffer instead of writing only the selected sector.
+ */
+#define CFG_FORMAT_TRACK            0x20
+#define CFG_DOUBLE_DENSITY          0x10
+
 /* FD3712 controller status bits. BUSY is always clear after a command here. */
 #define STAT_BUSY                   0x01
 #define STAT_SEEK_ERROR             0x02
@@ -264,22 +274,14 @@ static void read_sector(void)
     trace_operation("READ");
 }
 
-static void write_sector(void)
+static int write_preconditions(struct fdcplus_drive **drive_out,
+                               const char *operation)
 {
     struct fdcplus_drive *drive;
-    uint64_t offset;
-    size_t count;
-
-    /* A WRITE ends the current buffer-load phase even when the operation
-     * fails. Keep write_count/data intact so an immediate controller retry can
-     * reuse the sector, while making the next WRTBUF sequence restart at byte
-     * zero rather than overflowing a full prior buffer.
-     */
-    write_index = 0;
 
     if (!position_valid()) {
-        trace_operation("WRITE failed");
-        return;
+        trace_operation(operation);
+        return 0;
     }
 
     drive = current_drive();
@@ -291,14 +293,90 @@ static void write_sector(void)
          */
         error_status |= STAT_WRITE_PROTECT | STAT_NOT_READY;
         trace_operation("WRITE protected");
-        return;
+        return 0;
     }
 
     if (write_count < FDCPLUS_SECTOR_SIZE) {
         error_status |= STAT_CRC_ERROR;
         trace_operation("WRITE short buffer");
+        return 0;
+    }
+
+    *drive_out = drive;
+    return 1;
+}
+
+static void format_track(void)
+{
+    struct fdcplus_drive *drive;
+    uint64_t offset;
+    unsigned sector;
+    size_t count;
+
+    if (!write_preconditions(&drive, "FORMAT failed"))
+        return;
+
+    /*
+     * FORMAT v1.5 loads one 128-byte E5 buffer, sets configuration 20h, then
+     * issues one WRITE per track. The FDC+ extension formats all 26 sectors
+     * on that track from the same controller buffer. A flat .img has no gap,
+     * address-mark, or CRC metadata, so the equivalent operation is to rewrite
+     * each of the 26 sector payloads in physical sector order.
+     */
+    offset = sector_offset(current_track[selected_drive], 1);
+    if (fseeko(drive->fp, (off_t) offset, SEEK_SET) != 0) {
+        error_status |= STAT_NOT_READY;
+        trace_operation("FORMAT seek failed");
         return;
     }
+
+    for (sector = 0; sector < FDCPLUS_SECTORS_PER_TRACK; sector++) {
+        count = fwrite(write_buffer, 1, sizeof(write_buffer), drive->fp);
+        if (count != sizeof(write_buffer)) {
+            error_status |= STAT_NOT_READY;
+            trace_operation("FORMAT failed");
+            return;
+        }
+    }
+
+    if (fflush(drive->fp) != 0) {
+        error_status |= STAT_NOT_READY;
+        trace_operation("FORMAT failed");
+        return;
+    }
+
+    if (trace_enabled) {
+        fprintf(stderr,
+                "target-fdcplus8: drive=%u FORMAT track=%u sectors=1-26 "
+                "fill=%02X status=%02X\n",
+                (unsigned) selected_drive,
+                (unsigned) current_track[selected_drive & 0x03],
+                (unsigned) write_buffer[0],
+                (unsigned) status_value());
+    }
+}
+
+static void write_sector(void)
+{
+    struct fdcplus_drive *drive;
+    uint64_t offset;
+    size_t count;
+
+    /* A WRITE ends the current buffer-load phase even when the operation
+     * fails. Keep write_count/data intact so an immediate controller retry can
+     * reuse the sector, while making the next WRTBUF sequence restart at byte
+     * zero rather than overflowing a full prior buffer. FORMAT depends on this
+     * reuse: the buffer is loaded once, then reused for all 77 tracks.
+     */
+    write_index = 0;
+
+    if (config_latch & CFG_FORMAT_TRACK) {
+        format_track();
+        return;
+    }
+
+    if (!write_preconditions(&drive, "WRITE failed"))
+        return;
 
     offset = sector_offset(current_track[selected_drive], selected_sector);
     if (fseeko(drive->fp, (off_t) offset, SEEK_SET) != 0) {
@@ -337,6 +415,7 @@ static void check_crc(void)
         return;
     }
 
+    /* Flat IBM-3740 images carry payload bytes, not physical CRC fields. */
     count = fread(probe, 1, sizeof(probe), drive->fp);
     if (count != sizeof(probe)) {
         clearerr(drive->fp);
@@ -441,9 +520,13 @@ void target_fdcplus_type8_command_out(BYTE command)
 
     case CMD_LOAD_CONFIG:
         config_latch = data_latch;
-        if (trace_enabled && config_latch != 0)
-            fprintf(stderr, "target-fdcplus8: LOAD CONFIG %02X (accepted)\n",
-                    (unsigned) config_latch);
+        if (trace_enabled && config_latch != 0) {
+            fprintf(stderr,
+                    "target-fdcplus8: LOAD CONFIG %02X%s%s\n",
+                    (unsigned) config_latch,
+                    (config_latch & CFG_FORMAT_TRACK) ? " (format)" : "",
+                    (config_latch & CFG_DOUBLE_DENSITY) ? " (double-density)" : "");
+        }
         break;
 
     case CMD_DRIVE_SECTOR:
