@@ -22,7 +22,7 @@ Implemented controller commands are:
 
 - `00H` status mode
 - `03H` read sector
-- `05H` write sector
+- `05H` write sector / format current track when configuration bit `20H` is active
 - `07H` read/validate CRC
 - `09H` seek
 - `0BH` clear errors
@@ -36,6 +36,26 @@ Implemented controller commands are:
 - `81H` controller reset
 
 Status bits modeled are BUSY, seek error, CRC error, write protect, and not ready. Controller operations complete immediately in emulator time, so BUSY is clear when guest software polls after issuing a command.
+
+## FDC+3712 track-format extension
+
+The historical iCOM/Pertec FD3712 itself could read and write already formatted media but did not provide a disk-format operation. Mike Douglas' FDC+3712 compatibility software adds an FDC+ format extension patterned after the FD3812.
+
+`FORMAT.COM` v1.5 uses that extension as follows for the single-density IBM-3740 profile:
+
+1. load one 128-byte controller buffer (normally all `E5H`);
+2. issue `LOAD CONFIG` with `20H`, which places the controller in format mode;
+3. select/seek the desired track;
+4. issue one `WRITE` command.
+
+In format mode that one `WRITE` formats all 26 sectors on the current track from the same 128-byte buffer. The program loads the buffer once and reuses it for all 77 tracks. After formatting, it clears format mode and performs a normal sector write to track 0/sector 1.
+
+A flat `.img` file has no physical gap, address-mark, or CRC fields, so the emulator represents the format operation by rewriting all 26 128-byte sector payloads on the current track. Trace output identifies this explicitly, for example:
+
+```text
+target-fdcplus8: LOAD CONFIG 20 (format)
+target-fdcplus8: drive=1 FORMAT track=42 sectors=1-26 fill=E5 status=00
+```
 
 ## Media format
 
@@ -84,6 +104,8 @@ make run \
   FDCPLUS_TRACE=1
 ```
 
+Formatting is a write operation and therefore also requires write enable.
+
 ## Trace diagnostics
 
 A healthy Type 8 path should produce operations such as:
@@ -121,10 +143,10 @@ This lets us distinguish several failure classes cleanly:
 
 ## Regression test
 
-CI includes a small synthetic 4K ROM and IBM-3740 disk image. The ROM executes the FDC+3712 reset/select/restore/read/read-buffer/shift sequence through the targetsim I/O ports and must print `FDCPLUS8 OK` through Console I/O.
+CI includes a small synthetic 4K ROM and IBM-3740 disk image. The ROM first executes the FDC+3712 reset/select/restore/read/read-buffer/shift sequence through the targetsim I/O ports and must print `FDCPLUS8 OK` through Console I/O. It then loads an `E5H` format buffer, enters configuration `20H`, and formats track 2.
 
-This verifies the Type 8 protocol independently of CP/M before using the emulator to diagnose the larger CP/M 3 build.
+The host-side smoke test verifies that all 26 sectors of track 2 became `E5H` while the following track remained unchanged. This covers both the ordinary FD3712 read/FIFO protocol and the FDC+3712 format extension independently of CP/M.
 
 ## Deliberate limitations
 
-The current model does not simulate rotational timing, physical head-load delays, interrupt timing, flux-level errors, or soft-sector generation. It operates on flat logical sector images and makes controller commands complete immediately. Those details can be added later if software proves to depend on them; they are not needed for the current CP/M 3 BIOS/ROM debugging goal.
+The current model does not simulate rotational timing, physical head-load delays, interrupt timing, flux-level errors, or soft-sector generation. `RDCRC` can verify that a complete logical sector is present in the flat image, but the image format does not retain physical CRC fields. Controller commands complete immediately. Those details can be added later if software proves to depend on them; they are not needed for the current CP/M BIOS/ROM debugging goal.
